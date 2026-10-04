@@ -25,8 +25,7 @@ final class AppsPage extends Page {
         final ScrollView sv = new ScrollView(a);
         sv.setVerticalScrollBarEnabled(false);
         sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        final LinearLayout col = new LinearLayout(a);
-        col.setOrientation(LinearLayout.VERTICAL);
+        final LinearLayout col = new FrontLayout(a, LinearLayout.VERTICAL);
         col.setPadding(S.px(14), S.px(24), S.px(14), S.px(60));
         Ui.noClip(col);
         Ui.clipToBounds(sv);
@@ -35,14 +34,13 @@ final class AppsPage extends Page {
         firstView = null;
         for (int i = 0; i < all.size(); i++) {
             if (i % 6 == 0) {
-                row = new LinearLayout(a);
-                Ui.noClip(row);
+                row = new FrontLayout(a, LinearLayout.HORIZONTAL);
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
                 lp.bottomMargin = S.px(28);
                 col.addView(row, lp);
             }
             final Apps.A app = all.get(i);
-            final Card c = a.appCard(app, 250, 141);
+            final Card c = a.appCard(app, 250, 141).flat();
             if (pickMode) {
                 c.setOnClickListener(new View.OnClickListener() {
                     @Override

@@ -174,7 +174,7 @@ final class LivePage extends Page {
         for (Channel c : all) if (!c.group.isEmpty()) for (String g : c.group.split(";")) groups.add(g.trim());
         HorizontalScrollView gs = new HorizontalScrollView(a);
         gs.setHorizontalScrollBarEnabled(false);
-        LinearLayout gr = new LinearLayout(a);
+        LinearLayout gr = new FrontLayout(a, LinearLayout.HORIZONTAL);
         gr.setPadding(S.px(14), S.px(12), S.px(14), S.px(12));
         Ui.noClip(gr);
         Ui.clipToBounds(gs);
@@ -195,8 +195,7 @@ final class LivePage extends Page {
         final ScrollView sv = new ScrollView(a);
         sv.setVerticalScrollBarEnabled(false);
         sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        LinearLayout col = new LinearLayout(a);
-        col.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout col = new FrontLayout(a, LinearLayout.VERTICAL);
         col.setPadding(S.px(22), S.px(22), S.px(22), S.px(60));
         Ui.noClip(col);
         Ui.clipToBounds(sv);
@@ -206,8 +205,7 @@ final class LivePage extends Page {
         int from = pageNo * PER_PAGE, to = Math.min(idx.size(), from + PER_PAGE);
         for (int k = from; k < to; k++) {
             if ((k - from) % 4 == 0) {
-                row = new LinearLayout(a);
-                Ui.noClip(row);
+                row = new FrontLayout(a, LinearLayout.HORIZONTAL);
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
                 lp.bottomMargin = S.px(24);
                 col.addView(row, lp);
@@ -227,6 +225,7 @@ final class LivePage extends Page {
         }
         if (pages > 1) {
             Row more = new Row(a, "Halaman " + (pageNo + 1) + " / " + pages + "   •   Seterusnya ›", null, null);
+            more.flat();
             more.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -258,7 +257,7 @@ final class LivePage extends Page {
 
     private Card chip(String label, final String g) {
         boolean on = g == null ? group == null : g.equals(group);
-        Card c = new Card(a, 29, on ? Ui.selected(S.px(29)) : Ui.glass(S.px(29)));
+        Card c = new Card(a, 29, on ? Ui.selected(S.px(29)) : Ui.glass(S.px(29))).flat();
         c.scaleTo = 1.1f;
         TextView t = Ui.text(a, label, 22, Ui.WHITE, Ui.MEDIUM);
         t.setGravity(Gravity.CENTER);
@@ -277,7 +276,7 @@ final class LivePage extends Page {
     }
 
     private Card channelCard(final int index, final Channel ch) {
-        Card c = new Card(a, 22);
+        Card c = new Card(a, 22).flat();
         c.ambient = 0xFF3A1C7A;
         ImageView logo = new ImageView(a);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);

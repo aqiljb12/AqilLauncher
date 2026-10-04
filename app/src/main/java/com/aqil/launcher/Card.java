@@ -25,6 +25,19 @@ class Card extends FrameLayout {
     OnFocus onFocus;
     /** Warna ambien latar bila kad ini difokus (0 = tiada). */
     int ambient;
+    /** Kad rata (tanpa elevation/Z) – untuk kawasan skrol; dipasangkan dengan FrontLayout. */
+    private boolean flat;
+
+    Card flat() {
+        flat = true;
+        setElevation(0);
+        setTranslationZ(0);
+        return this;
+    }
+
+    private float liftZ() {
+        return flat ? 0 : S.px(22);
+    }
 
     Card(Context c, float radius) {
         this(c, radius, Ui.glass(S.px(radius)));
@@ -80,12 +93,12 @@ class Card extends FrameLayout {
     @Override
     public boolean performClick() {
         animate().cancel();
-        animate().scaleX(scaleTo * 0.92f).scaleY(scaleTo * 0.92f).translationZ(S.px(4)).rotationX(8f).setDuration(90)
+        animate().scaleX(scaleTo * 0.92f).scaleY(scaleTo * 0.92f).translationZ(flat ? 0 : S.px(4)).rotationX(8f).setDuration(90)
                 .setInterpolator(new DecelerateInterpolator()).withEndAction(new Runnable() {
                     @Override
                     public void run() {
                         float s = isFocused() ? scaleTo : 1f;
-                        animate().scaleX(s).scaleY(s).translationZ(isFocused() ? S.px(22) : 0).rotationX(0f).setDuration(260)
+                        animate().scaleX(s).scaleY(s).translationZ(isFocused() ? liftZ() : 0).rotationX(0f).setDuration(260)
                                 .setInterpolator(new OvershootInterpolator(2f)).withEndAction(null).start();
                     }
                 }).start();
@@ -100,7 +113,7 @@ class Card extends FrameLayout {
                 setRotationY(dir == View.FOCUS_RIGHT ? -14f : dir == View.FOCUS_LEFT ? 14f : 0f);
                 setRotationX(dir == View.FOCUS_DOWN ? 12f : dir == View.FOCUS_UP ? -12f : 0f);
             }
-            animate().scaleX(scaleTo).scaleY(scaleTo).translationZ(S.px(22)).rotationX(0).rotationY(0)
+            animate().scaleX(scaleTo).scaleY(scaleTo).translationZ(liftZ()).rotationX(0).rotationY(0)
                     .setDuration(340).setInterpolator(new OvershootInterpolator(1.3f)).start();
             ring.animate().alpha(1f).setDuration(150).start();
             if (Store.fx(getContext()) && getWidth() > 0) {

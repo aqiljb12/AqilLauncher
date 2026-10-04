@@ -31,8 +31,7 @@ final class SettingsPage extends Page {
         sv = new ScrollView(a);
         sv.setVerticalScrollBarEnabled(false);
         sv.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        LinearLayout col = new LinearLayout(a);
-        col.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout col = new FrontLayout(a, LinearLayout.VERTICAL);
         col.setPadding(S.px(14), S.px(16), S.px(14), S.px(80));
         Ui.noClip(col);
         Ui.clipToBounds(sv);
@@ -41,7 +40,7 @@ final class SettingsPage extends Page {
         col.addView(section("Wallpaper"));
         HorizontalScrollView hs = new HorizontalScrollView(a);
         hs.setHorizontalScrollBarEnabled(false);
-        LinearLayout walls = new LinearLayout(a);
+        LinearLayout walls = new FrontLayout(a, LinearLayout.HORIZONTAL);
         walls.setPadding(S.px(6), S.px(16), S.px(30), S.px(20));
         Ui.noClip(walls);
         Ui.clipToBounds(hs);
@@ -235,6 +234,7 @@ final class SettingsPage extends Page {
 
     private void row(LinearLayout col, String title, String sub, String right, final Runnable r) {
         Row row = new Row(a, title, sub, right);
+        row.flat();
         row.setTag("row:" + title);
         row.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -256,7 +256,7 @@ final class SettingsPage extends Page {
 
     private void addWall(LinearLayout walls, final String spec, String label, final File photo, String cur) {
         boolean active = spec.equals(cur);
-        Card c = new Card(a, 22, WallpaperView.preview(spec));
+        Card c = new Card(a, 22, WallpaperView.preview(spec)).flat();
         ((android.graphics.drawable.GradientDrawable) c.getBackground()).setCornerRadius(S.px(22));
         c.setTag("wall:" + spec);
         if (photo != null) {
