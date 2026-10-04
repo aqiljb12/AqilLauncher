@@ -65,12 +65,14 @@ final class Hub {
                 String err = null;
                 if (Store.xtream(app) != null) {
                     // akaun Xtream Codes: saluran dari API panel
+                    List<Channel> merged = new ArrayList<>(freeChannels(force || channels.isEmpty()));
                     try {
                         List<Channel> l = Xtream.loadLive(app, force || channels.isEmpty());
-                        if (l != null) channels = l;
+                        if (l != null) merged.addAll(l);
                     } catch (Exception e) {
                         err = e.getMessage() == null ? e.toString() : e.getMessage();
                     }
+                    if (!merged.isEmpty()) channels = merged;
                     finish(done, err);
                     return;
                 }
@@ -92,6 +94,32 @@ final class Hub {
                 finish(done, err);
             }
         }, "playlist").start();
+    }
+
+    /**
+     * Saluran percuma rasmi (RTM TV1/TV2/Berita/Sukan/Okey dll) dari senarai iptv-org Malaysia –
+     * sentiasa dipaparkan di atas, walaupun log masuk akaun IPTV. Kumpulan: "Percuma (RTM & lain-lain)".
+     */
+    private static List<Channel> freeChannels(boolean refresh) {
+        File cache = new File(app.getFilesDir(), "free.m3u");
+        try {
+            if (refresh || !cache.exists()) download(Store.DEFAULT_PLAYLIST, cache);
+        } catch (Exception ignored) {
+        }
+        List<Channel> out = new ArrayList<>();
+        try {
+            if (cache.exists()) {
+                for (Channel c : parse(cache)) {
+                    Channel f = new Channel(c.name.replace(" [Geo-blocked]", ""), c.url, "Percuma (RTM & lain-lain)", c.logo);
+                    f.ua = c.ua;
+                    f.referer = c.referer;
+                    f.origin = c.origin;
+                    out.add(f);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
     }
 
     private static void finish(final Done done, String err) {
