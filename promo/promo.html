@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ms">
+<head>
+<meta charset="utf-8">
+<title>Aqil Launcher promo</title>
+<style>
+@font-face{font-family:J;src:url(jakarta.woff2) format("woff2");font-weight:200 800}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1920px;overflow:hidden;background:#05070f;font-family:J,sans-serif;color:#fff}
+.stage{position:absolute;inset:0;overflow:hidden;background:linear-gradient(160deg,#0b1230,#1a0f2e 60%,#0a0716)}
+.blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.75}
+.b1{width:900px;height:900px;left:-300px;top:-200px;background:#1e6bff;animation:d1 25s linear both}
+.b2{width:850px;height:850px;right:-320px;top:500px;background:#8e3bff;animation:d2 25s linear both}
+.b3{width:800px;height:800px;left:-100px;bottom:-300px;background:#ff3d7f;opacity:.55;animation:d3 25s linear both}
+.b4{width:500px;height:500px;right:-100px;bottom:200px;background:#16c2d5;opacity:.45;animation:d1 25s linear reverse both}
+@keyframes d1{to{transform:translate(260px,380px) scale(1.2)}}
+@keyframes d2{to{transform:translate(-300px,-260px) scale(1.15)}}
+@keyframes d3{to{transform:translate(300px,-200px) scale(1.25)}}
+.grain{position:absolute;inset:0;background:radial-gradient(120% 80% at 50% 50%,transparent 40%,rgba(0,0,0,.55))}
+.scene{position:absolute;inset:0;opacity:0}
+.c{position:absolute;left:0;right:0;text-align:center}
+.glass{background:linear-gradient(180deg,rgba(38,43,58,.55),rgba(16,19,28,.65));border:2px solid rgba(255,255,255,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+/* generic */
+@keyframes in{from{opacity:0}to{opacity:1}}
+@keyframes out{from{opacity:1}to{opacity:0}}
+@keyframes up{from{opacity:0;transform:translateY(80px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes pop{0%{opacity:0;transform:scale(.6) rotateX(40deg)}70%{opacity:1;transform:scale(1.06) rotateX(0)}100%{opacity:1;transform:scale(1)}}
+
+/* S1 hook 0-3.2 */
+#s1{animation:in .3s 0s both,out .4s 2.8s forwards}
+#s1 .l1{top:690px;font-size:120px;font-weight:800;letter-spacing:-3px;animation:up .6s .15s both}
+#s1 .l2{top:830px;font-size:120px;font-weight:800;letter-spacing:-3px;animation:up .6s .55s both;color:#9db8ff}
+#s1 .l3{top:1030px;font-size:46px;font-weight:600;opacity:.85;animation:up .6s 1.3s both}
+
+/* S2 logo 3.0-6.6 */
+#s2{animation:in .3s 3.0s both,out .4s 6.2s forwards}
+#s2 .logo{position:absolute;left:390px;top:560px;width:300px;height:300px;border-radius:72px;background:linear-gradient(135deg,#0a84ff,#5e5ce6);box-shadow:0 40px 120px rgba(46,139,255,.6);display:grid;place-items:center;animation:spin 1.2s 3.1s cubic-bezier(.2,1.3,.4,1) both;perspective:800px}
+@keyframes spin{from{opacity:0;transform:perspective(900px) rotateY(-180deg) scale(.3)}to{opacity:1;transform:perspective(900px) rotateY(0) scale(1)}}
+#s2 .name{top:930px;font-size:112px;font-weight:800;letter-spacing:-3px;animation:up .6s 3.8s both}
+#s2 .sub{top:1080px;font-size:44px;font-weight:600;opacity:.85;animation:up .6s 4.2s both}
+#s2 .tag{top:1180px;animation:up .6s 4.6s both}
+#s2 .tag span{display:inline-block;padding:16px 34px;border-radius:40px;font-size:34px;font-weight:700;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.25)}
+
+/* S3 TV 6.4-12.0 */
+#s3{animation:in .4s 6.4s both,out .4s 11.6s forwards}
+#s3 .cap{top:300px;font-size:84px;font-weight:800;letter-spacing:-2px;line-height:1.05;animation:up .6s 6.5s both}
+#s3 .tvwrap{position:absolute;left:40px;top:640px;width:1000px;perspective:1600px}
+#s3 .tv{width:1000px;height:563px;border-radius:26px;border:10px solid #111;background:#0b1230;overflow:hidden;position:relative;box-shadow:0 60px 140px rgba(0,0,0,.7),0 0 0 2px #333;animation:tvin 1.4s 6.6s cubic-bezier(.2,1,.3,1) both,tvfloat 4s 8s ease-in-out forwards}
+@keyframes tvin{from{opacity:0;transform:rotateY(-35deg) rotateX(14deg) translateY(120px) scale(.8)}to{opacity:1;transform:rotateY(-8deg) rotateX(4deg)}}
+@keyframes tvfloat{from{transform:rotateY(-8deg) rotateX(4deg)}to{transform:rotateY(6deg) rotateX(2deg) translateY(-20px)}}
+.tvbg{position:absolute;inset:0;background:radial-gradient(60% 70% at 18% 20%,#1e6bffaa,transparent 70%),radial-gradient(55% 60% at 80% 30%,#8e3bffbb,transparent 70%),radial-gradient(50% 55% at 60% 95%,#ff3d7f88,transparent 70%),#140c2a}
+.mini{position:absolute}
+.stand{width:300px;height:22px;margin:0 auto;background:#111;border-radius:0 0 20px 20px}
+#s3 .feat{position:absolute;left:0;right:0;top:1340px;display:flex;flex-direction:column;align-items:center;gap:22px}
+#s3 .feat div{font-size:46px;font-weight:700;padding:20px 40px;border-radius:50px}
+#s3 .f1{animation:pop .6s 8.6s both}#s3 .f2{animation:pop .6s 9.2s both}#s3 .f3{animation:pop .6s 9.8s both}
+/* focus ring moving across mini cards */
+.ring{position:absolute;border:4px solid #fff;border-radius:14px;box-shadow:0 0 30px rgba(90,169,255,.9);animation:ringmove 3.6s 7.6s ease-in-out both}
+@keyframes ringmove{0%{left:150px;top:96px;width:420px;height:150px}25%{left:590px;top:160px;width:130px;height:86px}50%{left:740px;top:160px;width:130px;height:86px}75%{left:150px;top:290px;width:90px;height:52px}100%{left:250px;top:290px;width:90px;height:52px}}
+
+/* S4 features 11.8-15.2 */
+#s4{animation:in .3s 11.8s both,out .4s 14.8s forwards}
+#s4 .cap{top:420px;font-size:88px;font-weight:800;letter-spacing:-2px;line-height:1.05;animation:up .6s 11.9s both}
+#s4 .list{position:absolute;left:110px;right:110px;top:760px;display:flex;flex-direction:column;gap:30px}
+#s4 .item{display:flex;align-items:center;gap:30px;padding:34px 40px;border-radius:36px;font-size:46px;font-weight:700}
+#s4 .dot{width:64px;height:64px;border-radius:20px;flex:none}
+#s4 .i1{animation:slide .55s 12.3s both}#s4 .i2{animation:slide .55s 12.7s both}#s4 .i3{animation:slide .55s 13.1s both}#s4 .i4{animation:slide .55s 13.5s both}
+@keyframes slide{from{opacity:0;transform:perspective(900px) translateX(-200px) rotateY(30deg)}to{opacity:1;transform:none}}
+
+/* S5 remote 15.0-19.6 */
+#s5{animation:in .3s 15.0s both,out .4s 19.2s forwards}
+#s5 .cap{top:200px;font-size:92px;font-weight:800;letter-spacing:-2px;line-height:1.05;animation:up .6s 15.1s both}
+#s5 .cap2{top:1700px;font-size:50px;font-weight:700;color:#9db8ff;animation:up .6s 16.9s both}
+#s5 .tv2{position:absolute;left:140px;top:500px;width:800px;height:450px;border-radius:22px;border:9px solid #111;overflow:hidden;animation:up .6s 15.2s both}
+#s5 .phone{position:absolute;left:330px;top:1040px;width:420px;height:620px;border-radius:64px 64px 0 0;border:12px solid #1a1a1a;border-bottom:0;background:#070b1a;overflow:hidden;animation:phin .8s 15.4s cubic-bezier(.2,1.2,.4,1) both}
+@keyframes phin{from{transform:translateY(400px) rotate(-8deg)}to{transform:none}}
+#s5 .pad{position:absolute;left:70px;top:80px;width:256px;height:256px;border-radius:50%;background:rgba(255,255,255,.1);border:2px solid rgba(255,255,255,.25)}
+#s5 .ok{position:absolute;left:84px;top:84px;width:88px;height:88px;border-radius:50%;background:linear-gradient(160deg,#0a84ff,#5e5ce6);display:grid;place-items:center;font-size:30px;font-weight:800;animation:press .5s 16.2s both}
+@keyframes press{0%{transform:scale(1)}40%{transform:scale(.82);box-shadow:0 0 0 20px rgba(10,132,255,.3)}100%{transform:scale(1)}}
+#s5 .photo{position:absolute;left:380px;top:1210px;width:320px;height:180px;border-radius:12px;border:3px solid #fff;background:linear-gradient(180deg,#87b5e0,#e9c9a0 60%,#6d8f5b);box-shadow:0 30px 70px rgba(0,0,0,.6);animation:fly 1.3s 17.2s cubic-bezier(.5,0,.2,1) both}
+@keyframes fly{0%{opacity:0;transform:translate(0,0) scale(.5) rotate(-10deg)}15%{opacity:1}100%{opacity:1;transform:translate(0,-584px) scale(2.45) rotate(0)}}
+#s5 .waves{position:absolute;left:540px;top:1000px;width:10px;height:10px}
+.wave{position:absolute;left:-60px;top:-60px;width:120px;height:120px;border-radius:50%;border:5px solid #5aa9ff;opacity:0;animation:wv 1.2s both}
+.wave.w1{animation-delay:16.3s}.wave.w2{animation-delay:16.6s}.wave.w3{animation-delay:16.9s}
+@keyframes wv{0%{opacity:.9;transform:scale(.3)}100%{opacity:0;transform:scale(2.4)}}
+
+/* S6 live tv 19.4-22.6 */
+#s6{animation:in .3s 19.4s both,out .4s 22.2s forwards}
+#s6 .cap{top:220px;font-size:92px;font-weight:800;letter-spacing:-2px;line-height:1.05;animation:up .6s 19.5s both}
+#s6 .prev{position:absolute;left:90px;top:560px;width:900px;height:506px;border-radius:36px;overflow:hidden;background:linear-gradient(160deg,#0d2a5c,#123f86 45%,#0a1c3d);box-shadow:0 40px 100px rgba(0,0,0,.6);animation:pop .7s 19.6s both}
+#s6 .badge{position:absolute;left:24px;top:24px;padding:8px 18px;border-radius:12px;background:#e5263b;font-size:28px;font-weight:800;letter-spacing:2px}
+#s6 .scan{position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);animation:scan 2s 19.8s linear both}
+@keyframes scan{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+#s6 .grid{position:absolute;left:90px;top:1130px;width:900px;display:grid;grid-template-columns:repeat(3,1fr);gap:26px}
+#s6 .ch{height:170px;border-radius:28px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font-size:30px;font-weight:600}
+#s6 .ch b{font-size:52px;font-weight:800}
+#s6 .ch:nth-child(1){animation:pop .5s 20.0s both}#s6 .ch:nth-child(2){animation:pop .5s 20.15s both}#s6 .ch:nth-child(3){animation:pop .5s 20.3s both}
+#s6 .ch:nth-child(4){animation:pop .5s 20.45s both}#s6 .ch:nth-child(5){animation:pop .5s 20.6s both}#s6 .ch:nth-child(6){animation:pop .5s 20.75s both}
+#s6 .focus{outline:6px solid #fff;outline-offset:-6px;box-shadow:0 0 40px rgba(90,169,255,.8)}
+
+/* S7 CTA 22.4-25 */
+#s7{animation:in .4s 22.4s both}
+#s7 .logo{position:absolute;left:415px;top:520px;width:250px;height:250px;border-radius:60px;background:linear-gradient(135deg,#0a84ff,#5e5ce6);box-shadow:0 40px 120px rgba(46,139,255,.6);display:grid;place-items:center;animation:pop .7s 22.5s both}
+#s7 .name{top:840px;font-size:120px;font-weight:800;letter-spacing:-3px;animation:up .6s 22.8s both}
+#s7 .sub{top:1000px;font-size:46px;font-weight:600;opacity:.85;line-height:1.35;animation:up .6s 23.1s both}
+#s7 .btn{top:1200px;animation:up .6s 23.4s both}
+#s7 .btn span{display:inline-block;padding:34px 80px;border-radius:70px;background:#fff;color:#111;font-size:54px;font-weight:800;animation:pulse 1.2s 23.9s ease-in-out both}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07);box-shadow:0 0 60px rgba(255,255,255,.6)}}
+#s7 .bio{top:1400px;font-size:40px;font-weight:600;opacity:.75;animation:up .6s 23.7s both}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+  <div class="grain"></div>
+
+  <section class="scene" id="s1">
+    <div class="c l1">TV kau masih</div>
+    <div class="c l2">nampak bosan?</div>
+    <div class="c l3">Jom tukar jadi gempak.</div>
+  </section>
+
+  <section class="scene" id="s2">
+    <div class="logo"><svg width="170" height="170" viewBox="0 0 108 108"><path fill="#fff" d="M54,22 L84,84 L71,84 L54,48 L37,84 L24,84z"/></svg></div>
+    <div class="c name">Aqil Launcher</div>
+    <div class="c sub">Launcher Android TV gaya 2026</div>
+    <div class="c tag"><span>UI kaca • Animasi 3D</span></div>
+  </section>
+
+  <section class="scene" id="s3">
+    <div class="c cap">Skrin utama<br>yang hidup</div>
+    <div class="tvwrap">
+      <div class="tv">
+        <div class="tvbg"></div>
+        <div class="mini" style="left:28px;top:22px;font-size:40px;font-weight:800">7:56</div>
+        <div class="mini" style="left:140px;top:30px;font-size:16px;opacity:.85">28°C • Petaling Jaya</div>
+        <div class="mini glass" style="left:22px;top:96px;width:96px;height:300px;border-radius:24px"></div>
+        <div class="mini" style="left:150px;top:96px;width:420px;height:150px;border-radius:16px;background:linear-gradient(135deg,#120a2e,#4a1d7a 55%,#b3123a)"><div style="margin:18px;padding:4px 12px;display:inline-block;border-radius:10px;background:#e5263b;font-size:14px;font-weight:700">Live TV</div><div style="margin:4px 18px;font-size:30px;font-weight:800">Berita Perdana</div></div>
+        <div class="mini" style="left:590px;top:160px;width:130px;height:86px;border-radius:14px;background:linear-gradient(135deg,#c81d1d,#4a0909)"></div>
+        <div class="mini" style="left:740px;top:160px;width:130px;height:86px;border-radius:14px;background:linear-gradient(135deg,#2a2a2a,#0b0b0b)"></div>
+        <div class="mini" style="left:150px;top:262px;font-size:15px;font-weight:700">Aplikasi Kegemaran</div>
+        <div class="mini" style="left:150px;top:290px;display:flex;gap:10px"><span style="width:90px;height:52px;border-radius:10px;background:#fff"></span><span style="width:90px;height:52px;border-radius:10px;background:#0b0b0b"></span><span style="width:90px;height:52px;border-radius:10px;background:#133a8a"></span><span style="width:90px;height:52px;border-radius:10px;background:#0a6fd8"></span><span style="width:90px;height:52px;border-radius:10px;background:#e91e63"></span><span style="width:90px;height:52px;border-radius:10px;background:#111"></span></div>
+        <div class="mini" style="left:150px;top:366px;font-size:15px;font-weight:700">Siaran Langsung</div>
+        <div class="mini" style="left:150px;top:392px;display:flex;gap:10px"><span class="glass" style="width:80px;height:46px;border-radius:10px"></span><span class="glass" style="width:80px;height:46px;border-radius:10px"></span><span class="glass" style="width:80px;height:46px;border-radius:10px"></span><span class="glass" style="width:80px;height:46px;border-radius:10px"></span><span class="glass" style="width:80px;height:46px;border-radius:10px"></span></div>
+        <div class="ring"></div>
+      </div>
+      <div class="stand"></div>
+    </div>
+    <div class="feat"><div class="glass f1">Kad 3D ikut arah remote</div><div class="glass f2">Wallpaper LIVE &amp; video</div><div class="glass f3">Muat penuh semua saiz TV</div></div>
+  </section>
+
+  <section class="scene" id="s4">
+    <div class="c cap">Semua dalam<br>satu launcher</div>
+    <div class="list">
+      <div class="item glass i1"><span class="dot" style="background:linear-gradient(135deg,#0a84ff,#5e5ce6)"></span>Animasi 3D yang lancar</div>
+      <div class="item glass i2"><span class="dot" style="background:linear-gradient(135deg,#ff7a18,#e0218a)"></span>Wallpaper live, gambar, video</div>
+      <div class="item glass i3"><span class="dot" style="background:linear-gradient(135deg,#16c2d5,#0a84ff)"></span>Jam &amp; cuaca masa nyata</div>
+      <div class="item glass i4"><span class="dot" style="background:linear-gradient(135deg,#e5263b,#8e3bff)"></span>Live TV dengan pratonton</div>
+    </div>
+  </section>
+
+  <section class="scene" id="s5">
+    <div class="c cap">Telefon jadi<br>remote TV</div>
+    <div class="tv2"><div class="tvbg"></div></div>
+    <div class="waves"><div class="wave w1"></div><div class="wave w2"></div><div class="wave w3"></div></div>
+    <div class="phone">
+      <div style="position:absolute;left:30px;right:30px;top:30px;display:flex;justify-content:space-between;font-size:26px;font-weight:800">Remote <span style="font-size:18px;color:#30d158">● Bersambung</span></div>
+      <div class="pad"><div class="ok">OK</div></div>
+    </div>
+    <div class="photo"></div>
+    <div class="c cap2">Hantar gambar terus ke TV</div>
+  </section>
+
+  <section class="scene" id="s6">
+    <div class="c cap">Live TV lancar<br>+ pratonton langsung</div>
+    <div class="prev"><div class="scan"></div><div class="badge">LANGSUNG</div><div style="position:absolute;left:36px;bottom:30px;font-size:44px;font-weight:800">Berita Perdana</div></div>
+    <div class="grid">
+      <div class="ch glass"><b style="color:#2f7bff">TV1</b>Siaran percuma</div>
+      <div class="ch glass"><b style="color:#ff6a2b">TV2</b>Siaran percuma</div>
+      <div class="ch glass focus"><b style="color:#ff4d4d">BERITA</b>Berita</div>
+      <div class="ch glass"><b style="color:#3b82f6">SUKAN</b>Sukan</div>
+      <div class="ch glass"><b style="color:#c084fc">DRAMA</b>Drama</div>
+      <div class="ch glass"><b style="color:#ffcc00">KIDS</b>Kanak-kanak</div>
+    </div>
+  </section>
+
+  <section class="scene" id="s7">
+    <div class="logo"><svg width="140" height="140" viewBox="0 0 108 108"><path fill="#fff" d="M54,22 L84,84 L71,84 L54,48 L37,84 L24,84z"/></svg></div>
+    <div class="c name">Aqil Launcher</div>
+    <div class="c sub">Untuk Android TV &amp; TV Box<br>Remote terus dari telefon</div>
+    <div class="c btn"><span>Cuba sekarang</span></div>
+    <div class="c bio">Link di bio</div>
+  </section>
+</div>
+<script>
+// pause every animation; the renderer seeks time frame by frame
+window.seek = function (t) {
+  document.getAnimations().forEach(function (a) { a.pause(); a.currentTime = t * 1000; });
+};
+</script>
+</body>
+</html>
