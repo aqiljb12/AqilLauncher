@@ -95,7 +95,25 @@ final class SettingsPage extends Page {
         });
 
         col.addView(section("Live TV"));
-        row(col, "Senarai saluran (M3U)", Store.playlist(a), "Set semula", new Runnable() {
+        final String[] xt = Store.xtream(a);
+        row(col, xt != null ? "Akaun IPTV (Xtream Codes)" : "Log masuk akaun IPTV (Xtream / Smarters)",
+                xt != null ? Xtream.summary() : "Server (DNS) + username + password – atau isi dari telefon (Lagi › Akaun IPTV)",
+                xt != null ? "Tukar" : "Log masuk", new Runnable() {
+                    @Override
+                    public void run() {
+                        loginDialog(xt);
+                    }
+                });
+        if (xt != null) row(col, "Log keluar akaun IPTV", "Kembali guna senarai M3U", null, new Runnable() {
+            @Override
+            public void run() {
+                Xtream.logout(a);
+                Hub.loadChannels(true, null);
+                Toast.makeText(a, "Log keluar. Guna senarai M3U.", Toast.LENGTH_LONG).show();
+                rebuildKeepFocus();
+            }
+        });
+        if (xt == null) row(col, "Senarai saluran (M3U)", Store.playlist(a), "Set semula", new Runnable() {
             @Override
             public void run() {
                 Store.setPlaylist(a, null);
@@ -135,6 +153,42 @@ final class SettingsPage extends Page {
         v.setPadding(S.px(8), S.px(30), 0, 0);
         col.addView(v);
         root.addView(sv, Ui.at(-14, 70, 1680, 794));
+    }
+
+    private void loginDialog(String[] cur) {
+        GlassMenu m = new GlassMenu(a, "Akaun IPTV (Xtream Codes)");
+        final android.widget.EditText server = m.field("Server / DNS (cth http://server.com:8080)", cur != null ? cur[0] : "", false);
+        final android.widget.EditText user = m.field("Username", cur != null ? cur[1] : "", false);
+        final android.widget.EditText pass = m.field("Password", cur != null ? cur[2] : "", true);
+        m.add("Log masuk", new Runnable() {
+            @Override
+            public void run() {
+                final String s = server.getText().toString(), u = user.getText().toString(), p = pass.getText().toString();
+                Toast.makeText(a, "Log masuk…", Toast.LENGTH_SHORT).show();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        final String err = Xtream.login(a, s, u, p);
+                        Hub.main.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (err != null) {
+                                    Toast.makeText(a, err, Toast.LENGTH_LONG).show();
+                                    return;
+                                }
+                                Hub.loadChannels(true, new Hub.Done() {
+                                    @Override
+                                    public void run(int count, String e) {
+                                        Toast.makeText(a, count > 0 ? "Berjaya! " + count + " saluran" : "Gagal muat saluran: " + e, Toast.LENGTH_LONG).show();
+                                        if (root.isAttachedToWindow()) rebuildKeepFocus();
+                                    }
+                                });
+                            }
+                        });
+                    }
+                }).start();
+            }
+        }).add("Batal", null).show();
     }
 
     private String version() {

@@ -63,6 +63,17 @@ final class Hub {
             @Override
             public void run() {
                 String err = null;
+                if (Store.xtream(app) != null) {
+                    // akaun Xtream Codes: saluran dari API panel
+                    try {
+                        List<Channel> l = Xtream.loadLive(app, force || channels.isEmpty());
+                        if (l != null) channels = l;
+                    } catch (Exception e) {
+                        err = e.getMessage() == null ? e.toString() : e.getMessage();
+                    }
+                    finish(done, err);
+                    return;
+                }
                 File cache = new File(app.getFilesDir(), "playlist.m3u");
                 if (force || !cache.exists() || channels.isEmpty()) {
                     try {
@@ -78,16 +89,20 @@ final class Hub {
                         err = e.toString();
                     }
                 }
-                final int n = channels.size();
-                final String fe = n == 0 && err == null ? "Senarai kosong" : (n == 0 ? err : null);
-                if (done != null) main.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        done.run(n, fe);
-                    }
-                });
+                finish(done, err);
             }
         }, "playlist").start();
+    }
+
+    private static void finish(final Done done, String err) {
+        final int n = channels.size();
+        final String fe = n == 0 && err == null ? "Senarai kosong" : (n == 0 ? err : null);
+        if (done != null) main.post(new Runnable() {
+            @Override
+            public void run() {
+                done.run(n, fe);
+            }
+        });
     }
 
     private static void download(String url, File dest) throws Exception {

@@ -119,7 +119,18 @@ final class LivePage extends Page {
                 a.openLive(-1);
             }
         });
-        action(acts, "Semak saluran mati", new Runnable() {
+        if (Store.xtream(a) != null) {
+            action(acts, "Akaun IPTV: " + (Xtream.status.isEmpty() ? "lihat" : Xtream.status + " • tamat " + Xtream.expiry), new Runnable() {
+                @Override
+                public void run() {
+                    new GlassMenu(a, "Akaun IPTV (Xtream Codes)")
+                            .note(Xtream.summary(), 24, Ui.WHITE)
+                            .note("Tukar / log keluar akaun: Tetapan › Live TV, atau dari telefon (Lagi › Akaun IPTV).", 20, Ui.DIM)
+                            .add("OK", null)
+                            .show();
+                }
+            });
+        } else action(acts, "Semak saluran mati", new Runnable() {
             @Override
             public void run() {
                 Toast.makeText(a, "Menyemak " + Hub.channels.size() + " saluran…", Toast.LENGTH_LONG).show();
@@ -287,6 +298,7 @@ final class LivePage extends Page {
                 focused = index;
                 pName.setText((index + 1) + "  " + ch.name);
                 pGroup.setText(ch.group.isEmpty() ? "Siaran langsung" : ch.group);
+                if (ch.xtId != 0) epg(ch);
                 Img.load(pLogo, ch.logo, S.px(280));
                 root.removeCallbacks(startPreview);
                 if (previewing != index) {
@@ -304,6 +316,23 @@ final class LivePage extends Page {
             }
         });
         return c;
+    }
+
+    /** EPG ringkas (rancangan sekarang) untuk akaun Xtream. */
+    private void epg(final Channel ch) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String s = Xtream.nowNext(a, ch);
+                if (s == null) return;
+                Hub.main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (pGroup != null && focused >= 0 && focused < Hub.channels.size() && Hub.channels.get(focused) == ch) pGroup.setText(s);
+                    }
+                });
+            }
+        }).start();
     }
 
     // ---------------------------------------------------------------- pratonton

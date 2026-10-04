@@ -8,6 +8,8 @@ final class Channel {
     String drmType, drmKey;
     /** null = belum disemak, TRUE = berfungsi, FALSE = mati. */
     volatile Boolean alive;
+    /** stream_id Xtream Codes (0 = saluran M3U biasa). */
+    int xtId;
 
     Channel(String name, String url, String group, String logo) {
         this.name = name;

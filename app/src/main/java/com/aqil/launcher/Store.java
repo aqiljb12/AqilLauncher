@@ -28,6 +28,23 @@ final class Store {
         p(c).edit().putString("playlist", url == null || url.isEmpty() ? DEFAULT_PLAYLIST : url).apply();
     }
 
+    // ---- akaun IPTV Xtream Codes (Smarters / TiviMate) ----
+
+    /** {server, user, pass} atau null jika guna senarai M3U. */
+    static String[] xtream(Context c) {
+        String s = p(c).getString("xtServer", null);
+        if (s == null || s.isEmpty()) return null;
+        return new String[]{s, p(c).getString("xtUser", ""), p(c).getString("xtPass", "")};
+    }
+
+    static void setXtream(Context c, String server, String user, String pass) {
+        if (server == null) {
+            p(c).edit().remove("xtServer").remove("xtUser").remove("xtPass").putInt("lastCh", 0).apply();
+        } else {
+            p(c).edit().putString("xtServer", server).putString("xtUser", user).putString("xtPass", pass).putInt("lastCh", 0).apply();
+        }
+    }
+
     static int lastChannel(Context c) {
         return p(c).getInt("lastCh", 0);
     }

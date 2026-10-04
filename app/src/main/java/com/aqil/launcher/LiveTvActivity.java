@@ -240,6 +240,22 @@ public class LiveTvActivity extends BaseActivity {
         infoNum.setText(String.valueOf(i + 1));
         infoName.setText(c.name);
         infoGroup.setText(c.group);
+        if (c.xtId != 0) {
+            final Channel ch = c;
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    final String s = Xtream.nowNext(LiveTvActivity.this, ch);
+                    if (s != null) runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (index >= 0 && index < Hub.channels.size() && (Hub.channels.get(index) == ch || pending >= 0 && Hub.channels.get(pending) == ch))
+                                infoGroup.setText(s);
+                        }
+                    });
+                }
+            }).start();
+        }
         Img.load(infoLogo, c.logo, S.px(170));
         info.animate().cancel();
         info.setAlpha(1f);

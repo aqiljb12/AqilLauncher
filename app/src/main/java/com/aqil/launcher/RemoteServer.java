@@ -419,8 +419,33 @@ final class RemoteServer {
             case "/api/playlist": return playlist(r.json().optString("url").trim());
             case "/api/log": return Res.json(obj("log", App.lastCrash()));
             case "/api/probe": {
+                if (Store.xtream(ctx) != null) return Res.result("Semakan dimatikan untuk akaun IPTV (elak had sambungan).");
                 Hub.probe(null);
                 return Res.ok();
+            }
+            case "/api/xtream": {
+                JSONObject j = r.json();
+                if (j.optBoolean("logout")) {
+                    Xtream.logout(ctx);
+                } else {
+                    String err = Xtream.login(ctx, j.optString("server"), j.optString("user"), j.optString("pass"));
+                    if (err != null) return Res.result(err);
+                }
+                final CountDownLatch l = new CountDownLatch(1);
+                final int[] n = {0};
+                Hub.loadChannels(true, (count, e) -> {
+                    n[0] = count;
+                    l.countDown();
+                });
+                l.await(60, TimeUnit.SECONDS);
+                Hub.main.post(() -> {
+                    BaseActivity t = Hub.top();
+                    if (t instanceof MainActivity) ((MainActivity) t).refreshCurrent();
+                });
+                JSONObject o = obj("ok", true);
+                put(o, "count", n[0]);
+                put(o, "info", Xtream.summary());
+                return Res.json(o);
             }
             case "/api/upload": return upload(r);
             case "/api/upload/video": return uploadVideo(r);
@@ -495,6 +520,12 @@ final class RemoteServer {
         put(o, "channels", Hub.channels.size());
         put(o, "playing", Hub.playing);
         put(o, "playlist", Store.playlist(ctx));
+        String[] xt = Store.xtream(ctx);
+        if (xt != null) {
+            put(o, "xtServer", xt[0]);
+            put(o, "xtUser", xt[1]);
+            put(o, "xtInfo", Xtream.summary());
+        }
         put(o, "wall", Store.wallpaper(ctx));
         put(o, "video", Hub.videoWallpaperFile().exists());
         put(o, "place", Weather.place);

@@ -44,6 +44,26 @@ final class GlassMenu {
         return this;
     }
 
+    /** Kotak teks (untuk log masuk akaun dsb). */
+    android.widget.EditText field(String hint, String value, boolean password) {
+        android.widget.EditText e = new android.widget.EditText(c);
+        e.setHint(hint);
+        e.setText(value);
+        e.setSingleLine(true);
+        e.setTextColor(Ui.WHITE);
+        e.setHintTextColor(Ui.FAINT);
+        e.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, S.px(26));
+        e.setBackground(Ui.glass(S.px(18)));
+        e.setPadding(S.px(22), S.px(14), S.px(22), S.px(14));
+        e.setInputType(android.text.InputType.TYPE_CLASS_TEXT | (password
+                ? android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD : android.text.InputType.TYPE_TEXT_VARIATION_URI));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = S.px(10);
+        box.addView(e, lp);
+        if (firstButton == null) firstButton = e;
+        return e;
+    }
+
     GlassMenu add(String label, final Runnable action) {
         Row b = new Row(c, label, null, null);
         b.setOnClickListener(new View.OnClickListener() {

@@ -161,6 +161,14 @@ input::placeholder{color:rgba(255,255,255,.4)}
     <input type="url" id="url" placeholder="https://youtube.com/…">
     <div class="row"><div class="btn pri" id="sendurl">Buka</div></div>
    </div>
+   <div class="sec">Akaun IPTV (Xtream Codes / Smarters)</div>
+   <div class="glass" style="padding:14px">
+    <div id="xtinfo" style="color:var(--t2);font-size:13px;margin:0 4px 10px">Belum log masuk</div>
+    <input type="url" id="xtserver" placeholder="Server / DNS, cth http://server.com:8080" autocomplete="off">
+    <input type="text" id="xtuser" placeholder="Username" autocomplete="off" autocapitalize="off" style="margin-top:8px">
+    <input type="password" id="xtpass" placeholder="Password" autocomplete="off" style="margin-top:8px;width:100%;padding:15px 18px;border-radius:18px;border:1px solid var(--gb);background:rgba(255,255,255,.08);color:#fff;font-size:16px;outline:none;-webkit-user-select:text;user-select:text">
+    <div class="row"><div class="btn pri" id="xtlogin">Log masuk</div><div class="btn" id="xtlogout">Log keluar</div></div>
+   </div>
    <div class="sec">Senarai saluran TV (M3U)</div>
    <div class="glass" style="padding:14px">
     <input type="url" id="pl" placeholder="URL .m3u">
@@ -332,6 +340,8 @@ $('#addtxt').onclick=async()=>{const j=await jpost('/api/text',{text:$('#txt').v
 $('#sendurl').onclick=async()=>{const j=await jpost('/api/url',{url:$('#url').value});if(j.ok)toast('Dibuka di TV')};
 $('#clrwall').onclick=async()=>{await jpost('/api/wallpaper',{spec:'aurora'});markWall('aurora');toast('Wallpaper Aurora dipasang')};
 $('#savecity').onclick=async()=>{toast('Mencari…');const j=await jpost('/api/weather',{city:$('#city').value});if(j.ok)toast('Lokasi cuaca: '+j.place)};
+$('#xtlogin').onclick=async()=>{toast('Log masuk & muat saluran…');const j=await jpost('/api/xtream',{server:$('#xtserver').value,user:$('#xtuser').value,pass:$('#xtpass').value});if(j.ok){toast('Berjaya! '+j.count+' saluran');$('#xtinfo').textContent=j.info;$('#xtpass').value='';CH=null}};
+$('#xtlogout').onclick=async()=>{const j=await jpost('/api/xtream',{logout:true});if(j.ok){toast('Log keluar. Guna senarai M3U.');$('#xtinfo').textContent='Belum log masuk';CH=null}};
 $('#showlog').onclick=async()=>{const j=await(await api('/api/log')).json();const el=$('#log');el.textContent=j.log||'Tiada ralat direkodkan 👍';el.style.display='block'};
 $('#logout').onclick=()=>{document.cookie='t=; Max-Age=0; Path=/';login(true)};
 async function loadState(){
@@ -339,7 +349,7 @@ async function loadState(){
   $('#s-a11y').textContent=s.a11y?'Aktif ✓':'Tidak aktif';
   $('#s-scr').textContent=s.screen;$('#s-ch').textContent=s.channels;
   if(!$('#pl').value)$('#pl').value=s.playlist;
-  markWall(s.wall);if(s.place&&!$('#city').value)$('#city').placeholder=s.place;
+  markWall(s.wall);if(s.xtInfo){$('#xtinfo').textContent=s.xtInfo;if(!$('#xtserver').value)$('#xtserver').value=s.xtServer;if(!$('#xtuser').value)$('#xtuser').value=s.xtUser}if(s.place&&!$('#city').value)$('#city').placeholder=s.place;
 }
 async function init(){try{const s=await(await api('/api/state')).json();$('#sub').textContent=s.a11y?'Kawalan penuh':'Mod launcher';$('#pl').value=s.playlist;markWall(s.wall);wsConnect()}catch(e){}}
 init();
