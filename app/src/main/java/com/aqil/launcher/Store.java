@@ -153,6 +153,15 @@ final class Store {
         p(c).edit().putString("wplace", name + "|" + lat + "|" + lon).apply();
     }
 
+    /** Live TV skrin penuh: paksa kualiti tertinggi (lalai) atau Auto ikut kelajuan Internet. */
+    static boolean maxQuality(Context c) {
+        return p(c).getBoolean("maxQ", true);
+    }
+
+    static void setMaxQuality(Context c, boolean on) {
+        p(c).edit().putBoolean("maxQ", on).apply();
+    }
+
     static boolean autoSkip(Context c) {
         return p(c).getBoolean("autoSkip", true);
     }

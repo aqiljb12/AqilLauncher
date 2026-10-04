@@ -55,7 +55,7 @@ public class LiveTvActivity extends BaseActivity {
     private SurfaceView surface;
     private FrameLayout videoBox, panel, info;
     private ListView list;
-    private TextView infoNum, infoName, infoGroup, status, digits;
+    private TextView infoNum, infoName, infoGroup, status, digits, resLabel;
     private ImageView infoLogo;
     private ProgressBar spinner;
     private ChAdapter adapter;
@@ -168,6 +168,12 @@ public class LiveTvActivity extends BaseActivity {
         liveBadge.setBackground(Ui.solid(Ui.RED, S.px(8)));
         liveBadge.setPadding(S.px(8), S.px(4), S.px(8), S.px(4));
         info.addView(liveBadge, Ui.at(330, 26, -2, -2));
+        // resolusi sebenar siaran (cth "FHD 1080p") supaya mudah tahu sama ada siaran itu sendiri kabur
+        resLabel = Ui.text(this, "", 20, Ui.WHITE, Ui.BOLD);
+        resLabel.setBackground(Ui.solid(0xCC2E8BFF, S.px(8)));
+        resLabel.setPadding(S.px(8), S.px(4), S.px(8), S.px(4));
+        resLabel.setVisibility(View.GONE);
+        info.addView(resLabel, Ui.at(480, 26, -2, -2));
         infoName = Ui.text(this, "", 40, Ui.WHITE, Ui.BOLD);
         info.addView(infoName, Ui.at(224, 64, 620, -2));
         infoGroup = Ui.text(this, "", 24, Ui.DIM, Ui.MEDIUM);
@@ -259,6 +265,13 @@ public class LiveTvActivity extends BaseActivity {
             @Override
             public void onVideoSizeChanged(VideoSize vs) {
                 fit(vs);
+                int hgt = vs.height;
+                if (hgt <= 0) {
+                    resLabel.setVisibility(View.GONE);
+                } else {
+                    resLabel.setText(hgt >= 2000 ? " 4K " : hgt >= 1000 ? " FHD " + hgt + "p " : hgt >= 700 ? " HD " + hgt + "p " : " SD " + hgt + "p ");
+                    resLabel.setVisibility(View.VISIBLE);
+                }
             }
 
             @Override
@@ -324,6 +337,7 @@ public class LiveTvActivity extends BaseActivity {
 
     private void start(int i) {
         if (i < 0 || i >= Hub.channels.size()) return;
+        resLabel.setVisibility(View.GONE);
         pending = -1;
         index = i;
         retries = 0; // cuba semula dikira bagi setiap saluran; "skips" sengaja TIDAK direset di sini

@@ -19,6 +19,8 @@ import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter;
 
 import java.util.HashMap;
 import java.util.Locale;
@@ -36,7 +38,16 @@ final class Streams {
         DefaultLoadControl lc = preview
                 ? new DefaultLoadControl.Builder().setBufferDurationsMs(4000, 15000, 800, 1500).build()
                 : new DefaultLoadControl.Builder().setBufferDurationsMs(20000, 60000, 1500, 3000).build();
-        ExoPlayer p = new ExoPlayer.Builder(c, rf).setLoadControl(lc).build();
+        // Kualiti: skrin penuh = resolusi TERTINGGI yang peranti boleh nyahkod (siaran HLS/DASH berbilang kualiti
+        // tidak lagi bermula/kekal di versi kabur); pratonton kecil = SD sahaja untuk jimat data.
+        DefaultTrackSelector ts = new DefaultTrackSelector(c);
+        DefaultTrackSelector.Parameters.Builder pb = ts.buildUponParameters();
+        if (preview) pb.setMaxVideoSizeSd();
+        else if (Store.maxQuality(c)) pb.setForceHighestSupportedBitrate(true);
+        ts.setParameters(pb);
+        // anggaran lebar jalur awal tinggi supaya mod Auto pun terus pilih HD, bukan mula dari kualiti terendah
+        DefaultBandwidthMeter bw = new DefaultBandwidthMeter.Builder(c).setInitialBitrateEstimate(preview ? 2_000_000L : 20_000_000L).build();
+        ExoPlayer p = new ExoPlayer.Builder(c, rf).setLoadControl(lc).setTrackSelector(ts).setBandwidthMeter(bw).build();
         p.setPlayWhenReady(true);
         return p;
     }

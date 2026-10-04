@@ -122,6 +122,15 @@ final class SettingsPage extends Page {
                 rebuildKeepFocus();
             }
         });
+        row(col, "Kualiti video Live TV", Store.maxQuality(a)
+                        ? "Tertinggi – sentiasa pilih resolusi paling tinggi yang siaran sediakan"
+                        : "Auto – ikut kelajuan Internet (jimat data)", Store.maxQuality(a) ? "Tertinggi" : "Auto", new Runnable() {
+                    @Override
+                    public void run() {
+                        Store.setMaxQuality(a, !Store.maxQuality(a));
+                        rebuildKeepFocus();
+                    }
+                });
         row(col, "Langkau saluran rosak automatik", "Bila saluran gagal, terus ke saluran seterusnya", Store.autoSkip(a) ? "ON" : "OFF", new Runnable() {
             @Override
             public void run() {
