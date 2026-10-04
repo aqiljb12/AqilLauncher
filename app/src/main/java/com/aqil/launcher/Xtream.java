@@ -50,10 +50,20 @@ final class Xtream {
     }
 
     /** Uji log masuk; pulangkan null jika berjaya, atau mesej ralat. */
+    /** Pautan yang SELALU disalah anggap sebagai server: kod Downloader, pemendek URL, fail APK. */
+    private static final String[] NOT_SERVER = {"aftv.news", "aftvnews.com", "bit.ly", "tinyurl.com", "t.me/", ".apk"};
+    static final String WRONG_SERVER = "Alamat ini bukan server IPTV. Pautan aftv.news / bit.ly ialah pautan muat turun APK, "
+            + "bukan server. Guna alamat \"DNS\" Smarters / Xtream (cth http://namaserver.com:8080).";
+
     static String login(Context c, String server, String u, String p) {
+        String low = server.toLowerCase(Locale.ROOT);
+        for (String bad : NOT_SERVER) if (low.contains(bad)) return WRONG_SERVER;
         String[] x = {normalise(server), u.trim(), p.trim()};
         try {
-            JSONObject o = new JSONObject(get(api(x, null)));
+            String body = get(api(x, null)).trim();
+            // server Xtream sebenar sentiasa pulangkan JSON; halaman web (<!DOCTYPE …) = alamat salah
+            if (!body.startsWith("{")) return WRONG_SERVER;
+            JSONObject o = new JSONObject(body);
             JSONObject ui = o.optJSONObject("user_info");
             if (ui == null || ui.optInt("auth", 0) == 0) return "Username atau password salah";
             if (!"Active".equalsIgnoreCase(ui.optString("status"))) return "Akaun tidak aktif (" + ui.optString("status") + ")";
