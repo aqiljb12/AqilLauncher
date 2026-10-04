@@ -16,10 +16,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug
+      - name: Build release APK
+        run: ./gradlew --no-daemon assembleRelease
       - name: Name the APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AqilLauncher.apk
+        run: cp app/build/outputs/apk/release/app-release.apk AqilLauncher.apk
       - uses: actions/upload-artifact@v4
         with:
           name: AqilLauncher-apk

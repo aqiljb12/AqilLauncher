@@ -20,7 +20,8 @@ html,body{margin:0;height:100%;background:#070b1a;color:var(--t);font:16px -appl
 .glass{background:var(--g);border:1px solid var(--gb);backdrop-filter:blur(26px) saturate(170%);-webkit-backdrop-filter:blur(26px) saturate(170%);box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 10px 30px rgba(0,0,0,.25);border-radius:var(--r)}
 header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px 6px}
 header h1{font-size:30px;margin:0;font-weight:700;letter-spacing:-.5px}
-header small{color:var(--t2)}
+header small{color:var(--t2);display:flex;align-items:center;gap:8px}
+#dot{width:9px;height:9px;border-radius:50%;background:#ff453a;display:inline-block;box-shadow:0 0 8px currentColor;transition:.3s}#dot.on{background:#30d158}
 main{flex:1;overflow-y:auto;padding:8px 16px 110px;-webkit-overflow-scrolling:touch}
 .tab{display:none}.tab.on{display:block;animation:in .35s cubic-bezier(.2,.9,.3,1.1)}
 @keyframes in{from{opacity:0;transform:translateY(14px) scale(.98)}}
@@ -73,13 +74,17 @@ input::placeholder{color:rgba(255,255,255,.4)}
 .sheet.on{display:flex}.sheet .glass{width:100%;padding:16px;animation:in .3s}
 .sheet img{width:100%;max-height:34vh;object-fit:contain;border-radius:14px;margin-bottom:6px}
 .pg{height:4px;border-radius:4px;background:rgba(255,255,255,.15);overflow:hidden;margin-top:12px;display:none}.pg i{display:block;height:100%;width:0;background:linear-gradient(90deg,#0a84ff,#bf5af2);transition:.2s}
+.wp{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}
+.wp div{aspect-ratio:16/10;border-radius:16px;display:flex;align-items:flex-end;justify-content:center;padding:6px;font-size:12px;border:2px solid transparent;text-shadow:0 1px 4px #000}
+.wp div.on{border-color:#5aa9ff;box-shadow:0 0 14px rgba(90,169,255,.6)}
+.ch img{width:54px;height:32px;object-fit:contain;flex:none}.ch.dead{opacity:.45}
 .st{display:flex;justify-content:space-between;padding:14px 18px;color:var(--t2);font-size:14px}.st b{color:#fff;font-weight:500}
 </style>
 </head>
 <body>
 <div class="aurora"><i></i><i></i><i></i></div>
 <div id="app">
- <header><h1 id="ttl">Remote</h1><small id="sub"></small></header>
+ <header><h1 id="ttl">Remote</h1><small><i id="dot"></i><span id="sub"></span></small></header>
  <main>
   <section class="tab on" id="t-remote">
    <div class="pad glass">
@@ -120,6 +125,7 @@ input::placeholder{color:rgba(255,255,255,.4)}
 
   <section class="tab" id="t-tv">
    <input type="search" id="chq" placeholder="Cari saluran…">
+   <div class="row"><div class="btn" id="probe">Semak saluran mati</div><div class="btn" id="chrefresh">Muat semula</div></div>
    <div id="chs"></div>
   </section>
 
@@ -129,6 +135,19 @@ input::placeholder{color:rgba(255,255,255,.4)}
    <div class="pg" id="pg"><i></i></div>
    <div class="row" style="margin-top:14px"><div class="btn pri" id="slide">▶ Tayang semua</div></div>
    <div class="gal" id="gal"></div>
+   <div class="sec">Wallpaper TV</div>
+   <div class="glass" style="padding:14px">
+    <div class="wp" id="wp">
+     <div data-w="aurora" style="background:linear-gradient(135deg,#1e6bff,#8e3bff,#ff3d7f)">Aurora • LIVE</div>
+     <div data-w="nebula" style="background:linear-gradient(135deg,#ff7a18,#e0218a,#5b2bff)">Nebula • LIVE</div>
+     <div data-w="video" style="background:linear-gradient(135deg,#222,#444)">Video • LIVE</div>
+     <div data-w="grad:night" style="background:linear-gradient(135deg,#0b1026,#1b2250,#3a1c55)">Malam</div>
+     <div data-w="grad:dusk" style="background:linear-gradient(135deg,#141028,#4b2378,#d9653b)">Senja</div>
+    </div>
+    <label class="drop" style="margin-top:12px;padding:16px"><big style="font-size:15px">Wallpaper LIVE dari video</big><small>Pilih video pendek (MP4) — main berulang tanpa bunyi</small><input type="file" id="vid" accept="video/*"></label>
+    <label class="drop" style="margin-top:10px;padding:16px"><big style="font-size:15px">Wallpaper dari gambar</big><small>Pilih satu gambar</small><input type="file" id="wimg" accept="image/*"></label>
+    <div class="pg" id="pg2"><i></i></div>
+   </div>
   </section>
 
   <section class="tab" id="t-more">
@@ -147,9 +166,14 @@ input::placeholder{color:rgba(255,255,255,.4)}
     <input type="url" id="pl" placeholder="URL .m3u">
     <div class="row"><div class="btn pri" id="savepl">Simpan & muat semula</div></div>
    </div>
+   <div class="sec">Cuaca (bandar)</div>
+   <div class="glass" style="padding:14px">
+    <input type="text" id="city" placeholder="cth: Kulai">
+    <div class="row"><div class="btn pri" id="savecity">Simpan</div></div>
+   </div>
    <div class="sec">Status</div>
    <div class="glass"><div class="st"><span>Kebolehcapaian</span><b id="s-a11y">-</b></div><div class="st"><span>Skrin TV</span><b id="s-scr">-</b></div><div class="st"><span>Saluran</span><b id="s-ch">-</b></div></div>
-   <div class="row" style="margin-top:14px"><div class="btn" id="clrwall">Buang wallpaper</div><div class="btn red" id="logout">Log keluar</div></div>
+   <div class="row" style="margin-top:14px"><div class="btn" id="clrwall">Wallpaper asal</div><div class="btn red" id="logout">Log keluar</div></div>
   </section>
  </main>
  <nav class="glass">
@@ -198,12 +222,28 @@ $$('nav button').forEach(b=>b.onclick=()=>{
   $$('nav button').forEach(x=>x.classList.toggle('on',x===b));
   $$('.tab').forEach(x=>x.classList.toggle('on',x.id==='t-'+t));
   $('#ttl').textContent=titles[t];
-  if(t==='apps')loadApps();if(t==='tv')loadCh();if(t==='img')loadGal();if(t==='more')loadState();
+  if(t==='apps')loadApps();if(t==='tv')loadCh();if(t==='img'){loadGal();loadState()}if(t==='more')loadState();
   $('main').scrollTop=0;
 });
 
+/* ---- WebSocket: sambungan kekal untuk kekunci (laju & stabil) ---- */
+let ws=null,wsOk=false,wsId=0,wsTimer=null;
+function setConn(on){$('#dot').classList.toggle('on',on)}
+function wsConnect(){
+  clearTimeout(wsTimer);
+  if(ws&&(ws.readyState===0||ws.readyState===1))return;
+  try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws')}catch(e){wsTimer=setTimeout(wsConnect,2000);return}
+  ws.onopen=()=>{wsOk=true;setConn(true)};
+  ws.onclose=()=>{wsOk=false;setConn(false);wsTimer=setTimeout(wsConnect,1500)};
+  ws.onerror=()=>{try{ws.close()}catch(e){}};
+  ws.onmessage=e=>{try{const j=JSON.parse(e.data);if(j.ok===false&&j.msg)toast(j.msg)}catch(_){}};
+}
+setInterval(()=>{if(wsOk)try{ws.send('{"ping":1}')}catch(e){}},20000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)wsConnect()});
+function wsSend(o){if(wsOk&&ws.readyState===1){ws.send(JSON.stringify(Object.assign({id:++wsId},o)));return true}return false}
+
 /* ---- kekunci dgn auto-ulang ---- */
-function sendKey(k){return jpost('/api/key',{k})}
+function sendKey(k){if(wsSend({k}))return Promise.resolve();return jpost('/api/key',{k})}
 $$('[data-k]').forEach(el=>{
   let to,iv;const k=el.dataset.k,norep=el.dataset.norep;
   const stop=()=>{clearTimeout(to);clearInterval(iv)};
@@ -218,7 +258,7 @@ $$('[data-k]').forEach(el=>{
  el.addEventListener('pointerup',e=>{if(!s)return;const p=pos(e);const dx=p[0]-s[0],dy=p[1]-s[1];
   const d=document.createElement('div');d.className='dot';const r=el.getBoundingClientRect();d.style.left=(e.clientX-r.left)+'px';d.style.top=(e.clientY-r.top)+'px';el.appendChild(d);setTimeout(()=>d.remove(),500);
   buzz();
-  if(Math.hypot(dx,dy)<.04)jpost('/api/touch',{t:'tap',x:p[0],y:p[1]});else jpost('/api/touch',{t:'swipe',x:s[0],y:s[1],x2:p[0],y2:p[1]});s=null});
+  const m=Math.hypot(dx,dy)<.04?{t:'tap',x:p[0],y:p[1]}:{t:'swipe',x:s[0],y:s[1],x2:p[0],y2:p[1]};if(!wsSend(m))jpost('/api/touch',m);s=null});
 })();
 
 /* ---- apl ---- */
@@ -238,9 +278,11 @@ async function loadCh(){
   if(!CH){CH=await(await api('/api/channels')).json()}
   const q=$('#chq').value.toLowerCase();
   const l=CH.filter(c=>(c[1]+' '+c[2]).toLowerCase().includes(q)).slice(0,400);
-  $('#chs').innerHTML=l.length?l.map(c=>`<div class="ch glass" data-i="${c[0]}"><b>${c[0]+1}</b><div><span>${esc(c[1])}</span><small>${esc(c[2]||'')}</small></div></div>`).join(''):'<p style="color:var(--t2);text-align:center;margin-top:40px">Tiada saluran. Tetapkan URL M3U di tab Lagi.</p>';
+  $('#chs').innerHTML=l.length?l.map(c=>`<div class="ch glass${c[4]<0?' dead':''}" data-i="${c[0]}"><b>${c[0]+1}</b>${c[3]?`<img loading="lazy" src="${esc(c[3])}" onerror="this.style.visibility='hidden'">`:'<img style="visibility:hidden">'}<div><span>${esc(c[1])}</span><small>${c[4]<0?'Tidak tersedia • ':''}${esc(c[2]||'')}</small></div></div>`).join(''):'<p style="color:var(--t2);text-align:center;margin-top:40px">Tiada saluran. Tetapkan URL M3U di tab Lagi.</p>';
 }
 $('#chq').oninput=loadCh;
+$('#probe').onclick=async()=>{await jpost('/api/probe',{});toast('Menyemak saluran di TV… buka semula tab ini sebentar lagi');setTimeout(()=>{CH=null;loadCh()},20000)};
+$('#chrefresh').onclick=()=>{CH=null;loadCh();toast('Dimuat semula')};
 $('#chs').onclick=e=>{const c=e.target.closest('.ch');if(c){buzz();jpost('/api/play',{i:+c.dataset.i}).then(j=>j.ok&&toast('Main di TV'))}};
 $('#savepl').onclick=async()=>{toast('Memuat turun senarai…');const j=await jpost('/api/playlist',{url:$('#pl').value});CH=null;if(j.ok)toast(j.count+' saluran dimuatkan')};
 
@@ -267,23 +309,36 @@ async function loadGal(){
 $('#gal').onclick=e=>{const i=e.target.closest('img');if(!i)return;cur=i.dataset.n;$('#shimg').src='/img?n='+encodeURIComponent(cur);$('#sheet').classList.add('on')};
 $('#sh-close').onclick=()=>$('#sheet').classList.remove('on');
 $('#sh-show').onclick=async()=>{await jpost('/api/image/show',{name:cur});$('#sheet').classList.remove('on')};
-$('#sh-wall').onclick=async()=>{const j=await jpost('/api/image/wall',{name:cur});if(j.ok)toast('Wallpaper TV ditukar');$('#sheet').classList.remove('on')};
+$('#sh-wall').onclick=async()=>{const j=await jpost('/api/image/wall',{name:cur});if(j.ok){toast('Wallpaper TV ditukar');markWall('')}$('#sheet').classList.remove('on')};
 $('#sh-del').onclick=async()=>{await jpost('/api/image/delete',{name:cur});$('#sheet').classList.remove('on');loadGal()};
 $('#slide').onclick=async()=>{const l=await(await api('/api/images')).json();if(!l.length)return toast('Belum ada gambar');jpost('/api/image/show',{name:l[0].name,slideshow:true})};
+
+/* ---- wallpaper ---- */
+function markWall(w){$$('#wp div').forEach(d=>d.classList.toggle('on',d.dataset.w===w))}
+$('#wp').onclick=async e=>{const d=e.target.closest('[data-w]');if(!d)return;buzz();const j=await jpost('/api/wallpaper',{spec:d.dataset.w});if(j.ok){markWall(d.dataset.w);toast('Wallpaper TV ditukar')}};
+function upload(url,file,pg){return new Promise((res,rej)=>{const x=new XMLHttpRequest();x.open('POST',url);
+  x.upload.onprogress=e=>{if(e.lengthComputable){pg.style.display='block';pg.firstElementChild.style.width=(e.loaded/e.total*100)+'%'}};
+  x.onload=()=>{pg.style.display='none';if(x.status==401){login(true);rej()}else res(x)};x.onerror=()=>{pg.style.display='none';rej()};x.send(file)})}
+$('#vid').onchange=async e=>{const f=e.target.files[0];if(!f)return;if(f.size>300*1024*1024)return toast('Video terlalu besar (maks 300MB)');
+  toast('Menghantar video…');try{await upload('/api/upload/video',f,$('#pg2'));toast('Wallpaper live video dipasang');markWall('video')}catch(_){toast('Gagal hantar video')}e.target.value=''};
+$('#wimg').onchange=async e=>{const f=e.target.files[0];if(!f)return;const b=await toBlob(f);
+  try{await upload('/api/upload?wall=1',b,$('#pg2'));toast('Wallpaper ditukar');markWall('');loadGal()}catch(_){toast('Gagal hantar')}e.target.value=''};
 
 /* ---- lagi ---- */
 $('#sendtxt').onclick=async()=>{const j=await jpost('/api/text',{text:$('#txt').value});if(j.ok)toast('Teks dihantar')};
 $('#addtxt').onclick=async()=>{const j=await jpost('/api/text',{text:$('#txt').value,append:true});if(j.ok){toast('Teks ditambah');$('#txt').value=''}};
 $('#sendurl').onclick=async()=>{const j=await jpost('/api/url',{url:$('#url').value});if(j.ok)toast('Dibuka di TV')};
-$('#clrwall').onclick=async()=>{await jpost('/api/wall/clear',{});toast('Wallpaper dibuang')};
+$('#clrwall').onclick=async()=>{await jpost('/api/wallpaper',{spec:'aurora'});markWall('aurora');toast('Wallpaper Aurora dipasang')};
+$('#savecity').onclick=async()=>{toast('Mencari…');const j=await jpost('/api/weather',{city:$('#city').value});if(j.ok)toast('Lokasi cuaca: '+j.place)};
 $('#logout').onclick=()=>{document.cookie='t=; Max-Age=0; Path=/';login(true)};
 async function loadState(){
   const s=await(await api('/api/state')).json();
   $('#s-a11y').textContent=s.a11y?'Aktif ✓':'Tidak aktif';
   $('#s-scr').textContent=s.screen;$('#s-ch').textContent=s.channels;
   if(!$('#pl').value)$('#pl').value=s.playlist;
+  markWall(s.wall);if(s.place&&!$('#city').value)$('#city').placeholder=s.place;
 }
-async function init(){try{const s=await(await api('/api/state')).json();$('#sub').textContent=s.a11y?'Kawalan penuh':'Mod launcher';$('#pl').value=s.playlist}catch(e){}}
+async function init(){try{const s=await(await api('/api/state')).json();$('#sub').textContent=s.a11y?'Kawalan penuh':'Mod launcher';$('#pl').value=s.playlist;markWall(s.wall);wsConnect()}catch(e){}}
 init();
 </script>
 </body>

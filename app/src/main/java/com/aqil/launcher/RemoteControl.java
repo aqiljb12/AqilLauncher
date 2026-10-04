@@ -6,6 +6,10 @@ import android.content.Intent;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
+import android.app.Instrumentation;
+import android.os.SystemClock;
+import android.view.InputDevice;
+import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 
 /** Terjemah arahan dari telefon kepada tindakan pada TV. Pulangkan null jika OK, atau mesej ralat. */
@@ -63,11 +67,12 @@ final class RemoteControl {
         final int code = code(k);
         final BaseActivity top = Hub.top();
         if (top != null && code != 0) {
+            if (inject(code)) return null;
+            // jika suntikan gagal: navigasi fokus manual dalam launcher
             Hub.main.post(new Runnable() {
                 @Override
                 public void run() {
-                    top.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
-                    top.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
+                    manual(top, code);
                 }
             });
             return null;
@@ -87,6 +92,46 @@ final class RemoteControl {
             default: return "Kekunci tak dikenali";
         }
         return ok ? null : "Tiada kesan pada apl ini";
+    }
+
+    /**
+     * Suntik kekunci sebenar ke tetingkap apl ini (dibenarkan tanpa kebenaran khas kerana tetingkap
+     * milik apl sendiri). Ini laluan yang sama macam remote fizikal: navigasi fokus, Back, dialog
+     * semuanya berfungsi dengan betul. Mesti dipanggil BUKAN dari thread utama.
+     */
+    private static boolean inject(int code) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return false;
+        try {
+            long now = SystemClock.uptimeMillis();
+            Instrumentation ins = new Instrumentation();
+            ins.sendKeySync(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, 0,
+                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_DPAD));
+            ins.sendKeySync(new KeyEvent(now, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0, 0,
+                    KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_DPAD));
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Ganti ViewRootImpl: hantar ke paparan, kalau tak diguna, gerak fokus sendiri. */
+    private static void manual(BaseActivity a, int code) {
+        KeyEvent down = new KeyEvent(KeyEvent.ACTION_DOWN, code), up = new KeyEvent(KeyEvent.ACTION_UP, code);
+        boolean used = a.dispatchKeyEvent(down);
+        a.dispatchKeyEvent(up);
+        if (used) return;
+        int dir = code == KeyEvent.KEYCODE_DPAD_UP ? android.view.View.FOCUS_UP
+                : code == KeyEvent.KEYCODE_DPAD_DOWN ? android.view.View.FOCUS_DOWN
+                : code == KeyEvent.KEYCODE_DPAD_LEFT ? android.view.View.FOCUS_LEFT
+                : code == KeyEvent.KEYCODE_DPAD_RIGHT ? android.view.View.FOCUS_RIGHT : 0;
+        if (dir == 0) return;
+        android.view.View cur = a.getCurrentFocus();
+        android.view.ViewGroup root = (android.view.ViewGroup) a.getWindow().getDecorView();
+        android.view.View next = android.view.FocusFinder.getInstance().findNextFocus(root, cur, dir);
+        if (next != null) {
+            BaseActivity.lastDir = dir;
+            next.requestFocus(dir);
+        }
     }
 
     private static int code(String k) {

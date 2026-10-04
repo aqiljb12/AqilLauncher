@@ -46,8 +46,6 @@
             android:configChanges="orientation|screenSize|keyboardHidden|keyboard|smallestScreenSize" />
         <activity android:name=".ImageViewerActivity" android:exported="false"
             android:launchMode="singleTop" android:screenOrientation="landscape" />
-        <activity android:name=".SettingsActivity" android:exported="false"
-            android:screenOrientation="landscape" />
 
         <service android:name=".RemoteService" android:exported="false" />
 

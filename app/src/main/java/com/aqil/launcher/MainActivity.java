@@ -4,428 +4,433 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextClock;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
-public class MainActivity extends BaseActivity implements Rail.Host {
-    private static final class AppInfo {
-        String pkg, label;
-        Drawable icon;
-        Intent launch;
-    }
-
-    private BackgroundView bg;
-    private ScrollView scroll;
-    private LinearLayout content;
-    private TextView chip;
-    private float d;
-    private List<AppInfo> apps = new ArrayList<>();
-    private String appsSig = "";
-    private Tile firstTile;
-    private boolean pkgReceiverRegistered;
+/**
+ * Launcher utama. Susun atur 1920x1080 (diskala ikut TV):
+ * jam & cuaca di atas, butang bulat kanan atas, sidebar kiri, halaman di tengah, dock di bawah.
+ */
+public class MainActivity extends BaseActivity {
+    private WallpaperView wall;
+    private FrameLayout host;
+    private final Map<String, Page> pages = new HashMap<>();
+    private final Map<String, NavItem[]> navs = new HashMap<>();
+    private String current;
+    private TextView temp, place;
+    private Weather.Icon wicon;
+    private boolean receiverOn, dirty;
 
     private final BroadcastReceiver pkgReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            loadApps();
+            Apps.load(MainActivity.this, new Runnable() {
+                @Override
+                public void run() {
+                    refreshCurrent();
+                }
+            });
         }
     };
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        d = U.dp(this, 1);
         FrameLayout root = new FrameLayout(this);
-        bg = new BackgroundView(this);
-        root.addView(bg, new FrameLayout.LayoutParams(-1, -1));
+        Ui.noClip(root);
+        root.setBackgroundColor(0xFF05070F);
 
-        scroll = new ScrollView(this) {
-            @Override
-            protected int computeScrollDeltaToGetChildRectOnScreen(android.graphics.Rect r) {
-                return 0; // kita skrol sendiri ikut baris
+        wall = new WallpaperView(this);
+        root.addView(wall, new FrameLayout.LayoutParams(-1, -1));
+        scrim(root, GradientDrawable.Orientation.TOP_BOTTOM, 0, 0, -1, 260, 0xA6000000, 0x00000000);
+        scrim(root, GradientDrawable.Orientation.LEFT_RIGHT, 0, 0, 1100, -1, 0x99000000, 0x00000000);
+        scrim(root, GradientDrawable.Orientation.TOP_BOTTOM, 0, 520, -1, 560, 0x00000000, 0xD0000000);
+
+        // ---- jam + cuaca
+        TextClock clock = new TextClock(this);
+        clock.setFormat24Hour("HH:mm");
+        clock.setFormat12Hour("h:mm");
+        clock.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, S.px(84));
+        clock.setTextColor(Ui.WHITE);
+        clock.setTypeface(Ui.MEDIUM);
+        clock.setIncludeFontPadding(false);
+        root.addView(clock, Ui.at(200, 36, -2, -2));
+        TextClock date = new TextClock(this);
+        date.setFormat24Hour("EEE, d MMM yyyy");
+        date.setFormat12Hour("EEE, d MMM yyyy");
+        date.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, S.px(28));
+        date.setTextColor(0xE6FFFFFF);
+        date.setTypeface(Ui.MEDIUM);
+        root.addView(date, Ui.at(204, 132, -2, -2));
+        View div = new View(this);
+        div.setBackgroundColor(0x55FFFFFF);
+        root.addView(div, Ui.at(470, 50, 2, 104));
+        wicon = new Weather.Icon(this);
+        root.addView(wicon, Ui.at(500, 50, 92, 92));
+        temp = Ui.text(this, Weather.tempText(), 46, Ui.WHITE, Ui.MEDIUM);
+        root.addView(temp, Ui.at(606, 52, -2, -2));
+        place = Ui.text(this, "", 26, 0xE6FFFFFF, Ui.MEDIUM);
+        root.addView(place, Ui.at(608, 110, 420, -2));
+
+        // ---- butang bulat kanan atas
+        int[][] tops = {{R.drawable.ic_search, 0}, {R.drawable.ic_settings, 1}, {R.drawable.ic_wifi, 2}, {R.drawable.ic_person, 3}};
+        for (int i = 0; i < tops.length; i++) {
+            final int which = tops[i][1];
+            Card c = new Card(this, 40, Ui.glass(S.px(40)));
+            c.scaleTo = 1.15f;
+            ImageView ic = Ui.icon(this, tops[i][0], Ui.WHITE);
+            c.addView(ic, new FrameLayout.LayoutParams(S.px(38), S.px(38), Gravity.CENTER));
+            c.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    topAction(which);
+                }
+            });
+            root.addView(c, Ui.at(1484 + i * 104, 50, 80, 80));
+        }
+
+        // ---- sidebar kiri
+        LinearLayout side = new LinearLayout(this);
+        side.setOrientation(LinearLayout.VERTICAL);
+        side.setGravity(Gravity.CENTER_HORIZONTAL);
+        side.setBackground(Ui.glass(S.px(40)));
+        side.setPadding(S.px(10), S.px(14), S.px(10), S.px(14));
+        Ui.noClip(side);
+        root.addView(side, Ui.at(44, 196, 132, -2));
+
+        // ---- halaman
+        host = new FrameLayout(this);
+        Ui.noClip(host);
+        root.addView(host, Ui.at(214, 196, 1660, 780));
+
+        // ---- dock bawah
+        LinearLayout dock = new LinearLayout(this);
+        dock.setGravity(Gravity.CENTER);
+        dock.setBackground(Ui.glass(S.px(46)));
+        dock.setPadding(S.px(12), S.px(8), S.px(12), S.px(8));
+        Ui.noClip(dock);
+        root.addView(dock, Ui.at((1920 - 880) / 2f, 976, 880, 96));
+
+        String[][] items = {{"home", "Home"}, {"apps", "Apl"}, {"live", "Live TV"}, {"remote", "Remote"}, {"settings", "Tetapan"}};
+        int[] icons = {R.drawable.ic_home, R.drawable.ic_apps, R.drawable.ic_livetv, R.drawable.ic_gamepad, R.drawable.ic_settings};
+        for (int i = 0; i < items.length; i++) {
+            NavItem s = new NavItem(this, items[i][0], icons[i], items[i][1], 28);
+            NavItem d = new NavItem(this, items[i][0], icons[i], items[i][1], 34);
+            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(S.px(112), S.px(112));
+            slp.topMargin = slp.bottomMargin = S.px(4);
+            side.addView(s, slp);
+            dock.addView(d, new LinearLayout.LayoutParams(S.px(168), S.px(80)));
+            navs.put(items[i][0], new NavItem[]{s, d});
+            for (final NavItem n : new NavItem[]{s, d}) {
+                n.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        if (n.page.equals("live") && "live".equals(current)) openLive(-1);
+                        else showPage(n.page);
+                        View f = pages.get(current) != null ? pages.get(current).first() : null;
+                        if (f != null) f.requestFocus();
+                    }
+                });
             }
-        };
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        scroll.setClipChildren(false);
-        scroll.setClipToPadding(false);
-        content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setClipChildren(false);
-        content.setPadding((int) (56 * d), (int) (36 * d), (int) (56 * d), (int) (120 * d));
-        scroll.addView(content, new FrameLayout.LayoutParams(-1, -2));
-        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        }
         setContentView(root);
 
-        bg.setAnimated(Store.fx(this));
         reloadWallpaper();
-        loadApps();
+        showPage("home");
+        Apps.load(this, new Runnable() {
+            @Override
+            public void run() {
+                refreshCurrent();
+                Page p = pages.get(current);
+                if (p != null && p.first() != null) p.first().requestFocus();
+            }
+        });
+        Hub.loadChannels(false, new Hub.Done() {
+            @Override
+            public void run(int count, String error) {
+                if ("home".equals(current) || "live".equals(current)) refreshCurrent();
+            }
+        });
+    }
+
+    private void scrim(FrameLayout root, GradientDrawable.Orientation o, float x, float y, float w, float h, int a, int b) {
+        View v = new View(this);
+        v.setBackground(new GradientDrawable(o, new int[]{a, b}));
+        root.addView(v, Ui.at(x, y, w, h));
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        bg.setAnimated(Store.fx(this));
-        if (!pkgReceiverRegistered) {
+        wall.resume();
+        if (!receiverOn) {
             IntentFilter f = new IntentFilter();
             f.addAction(Intent.ACTION_PACKAGE_ADDED);
             f.addAction(Intent.ACTION_PACKAGE_REMOVED);
             f.addDataScheme("package");
             registerReceiver(pkgReceiver, f);
-            pkgReceiverRegistered = true;
+            receiverOn = true;
         }
-        if (chip != null) chip.setText(chipText());
-        Hub.loadChannels(false, null); // sedia cache saluran
+        if (dirty) refreshCurrent();
+        dirty = true;
+        updateWeather();
+        Weather.refresh(this, false, new Runnable() {
+            @Override
+            public void run() {
+                updateWeather();
+            }
+        });
+    }
+
+    @Override
+    protected void onPause() {
+        wall.pause();
+        super.onPause();
     }
 
     @Override
     protected void onDestroy() {
-        if (pkgReceiverRegistered) unregisterReceiver(pkgReceiver);
+        if (receiverOn) unregisterReceiver(pkgReceiver);
         super.onDestroy();
     }
 
-    @Override
-    public void onNewIntent(Intent i) {
-        super.onNewIntent(i);
-        if (firstTile != null) {
-            scroll.smoothScrollTo(0, 0);
-            firstTile.requestFocus();
-        }
+    void updateWeather() {
+        temp.setText(Weather.tempText());
+        place.setText(Weather.place);
+        wicon.invalidate();
+    }
+
+    void reloadWallpaper() {
+        wall.reset();
+        wall.apply(Store.wallpaper(this));
+        if (Store.fx(this)) wall.resume();
+        else wall.pause();
     }
 
     @Override
     void parallax(float nx, float ny) {
-        bg.setParallax(nx, ny);
+        wall.parallax(nx, ny);
     }
 
-    void reloadWallpaper() {
-        final File f = Hub.wallpaperFile();
-        if (!f.exists()) {
-            bg.setWallpaper(null);
-            return;
-        }
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                final Bitmap b = ImageViewerActivity.decode(f, 320, 180);
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        bg.setWallpaper(b);
-                    }
-                });
+    // ---------------------------------------------------------------- halaman
+
+    private Page page(String name) {
+        Page p = pages.get(name);
+        if (p == null) {
+            switch (name) {
+                case "apps": p = new AppsPage(this); break;
+                case "live": p = new LivePage(this); break;
+                case "remote": p = new RemotePage(this); break;
+                case "settings": p = new SettingsPage(this); break;
+                default: p = new HomePage(this); break;
             }
-        }).start();
+            pages.put(name, p);
+        }
+        return p;
     }
 
-    // ---------------------------------------------------------------- apps
+    void showPage(String name) {
+        Page old = current == null ? null : pages.get(current);
+        if (old != null && !name.equals(current)) old.onHide();
+        current = name;
+        Page p = page(name);
+        p.build();
+        host.removeAllViews();
+        host.addView(p.root, new FrameLayout.LayoutParams(-1, -1));
+        p.root.setAlpha(0f);
+        p.root.setTranslationY(S.px(40));
+        p.root.setRotationX(Store.fx(this) ? 6f : 0f);
+        p.root.animate().alpha(1f).translationY(0).rotationX(0).setDuration(360).setInterpolator(new DecelerateInterpolator()).start();
+        for (Map.Entry<String, NavItem[]> e : navs.entrySet()) {
+            for (NavItem n : e.getValue()) n.setActive(e.getKey().equals(name));
+        }
+    }
 
-    private void loadApps() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                PackageManager pm = getPackageManager();
-                Map<String, AppInfo> map = new HashMap<>();
-                for (String cat : new String[]{Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
-                    for (ResolveInfo ri : pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(cat), 0)) {
-                        String pkg = ri.activityInfo.packageName;
-                        if (pkg.equals(getPackageName()) || map.containsKey(pkg)) continue;
-                        AppInfo a = new AppInfo();
-                        a.pkg = pkg;
-                        a.label = ri.loadLabel(pm).toString();
-                        a.icon = ri.loadIcon(pm);
-                        a.launch = pm.getLeanbackLaunchIntentForPackage(pkg);
-                        if (a.launch == null) a.launch = pm.getLaunchIntentForPackage(pkg);
-                        if (a.launch != null) map.put(pkg, a);
-                    }
+    /** Bina semula halaman semasa sambil kekalkan fokus jika boleh. */
+    void refreshCurrent() {
+        if (current == null) return;
+        View f = getCurrentFocus();
+        boolean inPage = f != null && isDescendant(f, host);
+        Page p = page(current);
+        p.build();
+        if (host.getChildCount() == 0 || host.getChildAt(0) != p.root) {
+            host.removeAllViews();
+            host.addView(p.root, new FrameLayout.LayoutParams(-1, -1));
+        }
+        if ((inPage || getCurrentFocus() == null) && p.first() != null) p.first().requestFocus();
+    }
+
+    private static boolean isDescendant(View v, View parent) {
+        while (v != null) {
+            if (v == parent) return true;
+            v = v.getParent() instanceof View ? (View) v.getParent() : null;
+        }
+        return false;
+    }
+
+    void pickFavorite() {
+        ((AppsPage) page("apps")).pickMode = true;
+        showPage("apps");
+        Page p = pages.get("apps");
+        if (p.first() != null) p.first().requestFocus();
+        ((AppsPage) p).pickMode = true;
+    }
+
+    private void topAction(int which) {
+        switch (which) {
+            case 0:
+                try {
+                    startActivity(new Intent("android.search.action.GLOBAL_SEARCH").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception e) {
+                    showPage("apps");
                 }
-                final List<AppInfo> list = new ArrayList<>(map.values());
-                Collections.sort(list, new Comparator<AppInfo>() {
-                    @Override
-                    public int compare(AppInfo a, AppInfo b) {
-                        return a.label.compareToIgnoreCase(b.label);
-                    }
-                });
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        apps = list;
-                        rebuild();
-                    }
-                });
-            }
-        }, "apps").start();
-    }
-
-    private String chipText() {
-        return "Remote  " + U.remoteUrl().replace("http://", "") + "   PIN " + Store.pin(this);
-    }
-
-    private TextView section(String s) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextColor(0xB3FFFFFF);
-        t.setTextSize(16);
-        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        t.setLetterSpacing(0.08f);
-        t.setPadding((int) (8 * d), (int) (18 * d), 0, (int) (2 * d));
-        return t;
-    }
-
-    private Rail newRail() {
-        Rail r = new Rail(this);
-        r.setPadding((int) (20 * d), (int) (6 * d), (int) (20 * d), (int) (10 * d));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins((int) (-20 * d), 0, (int) (-20 * d), 0);
-        r.setLayoutParams(lp);
-        return r;
-    }
-
-    private void rebuild() {
-        StringBuilder sig = new StringBuilder();
-        for (AppInfo a : apps) sig.append(a.pkg).append(',');
-        sig.append(Store.favorites(this));
-        String s = sig.toString();
-        if (s.equals(appsSig) && content.getChildCount() > 0) return;
-        appsSig = s;
-
-        View focusedBefore = getCurrentFocus();
-        String keepTitle = focusedBefore instanceof Tile ? ((Tile) focusedBefore).tag : null;
-
-        content.removeAllViews();
-        firstTile = null;
-        Tile refocus = null;
-
-        // ---- kepala: jam + chip remote
-        FrameLayout header = new FrameLayout(this);
-        LinearLayout clockBox = new LinearLayout(this);
-        clockBox.setOrientation(LinearLayout.VERTICAL);
-        TextClock clock = new TextClock(this);
-        clock.setFormat24Hour("HH:mm");
-        clock.setFormat12Hour("h:mm");
-        clock.setTextColor(Color.WHITE);
-        clock.setTextSize(64);
-        clock.setTypeface(Typeface.create("sans-serif-thin", Typeface.NORMAL));
-        clock.setIncludeFontPadding(false);
-        TextClock date = new TextClock(this);
-        date.setFormat24Hour("EEEE, d MMMM yyyy");
-        date.setFormat12Hour("EEEE, d MMMM yyyy");
-        date.setTextColor(0xCCFFFFFF);
-        date.setTextSize(18);
-        clockBox.addView(clock);
-        clockBox.addView(date);
-        header.addView(clockBox, new FrameLayout.LayoutParams(-2, -2, Gravity.START | Gravity.CENTER_VERTICAL));
-        chip = new TextView(this) {
-            @Override
-            protected void onDraw(Canvas c) {
-                Glass.plate(c, d, 0, 0, getWidth(), getHeight(), getHeight() / 2f, 0f, 0, 0, -1f);
-                super.onDraw(c);
-            }
-        };
-        chip.setText(chipText());
-        chip.setTextColor(Color.WHITE);
-        chip.setTextSize(15);
-        chip.setGravity(Gravity.CENTER);
-        chip.setPadding((int) (22 * d), (int) (10 * d), (int) (22 * d), (int) (10 * d));
-        header.addView(chip, new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.CENTER_VERTICAL));
-        content.addView(header, new LinearLayout.LayoutParams(-1, -2));
-
-        // ---- utama
-        content.addView(section("UTAMA"));
-        Rail hero = newRail();
-        Tile live = hero(R_TV(), "Live TV", "Saluran siaran langsung", 0xFF0A84FF, 0xFF5E5CE6, "hero:live");
-        live.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                open(new Intent(MainActivity.this, LiveTvActivity.class));
-            }
-        });
-        Tile phone = hero(R_PHONE(), "Remote Telefon", U.remoteUrl().replace("http://", ""), 0xFFBF5AF2, 0xFFFF375F, "hero:remote");
-        phone.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showRemoteInfo();
-            }
-        });
-        Tile photo = hero(R_PHOTO(), "Galeri Telefon", "Gambar dihantar dari telefon", 0xFFFF9F0A, 0xFFFF375F, "hero:gallery");
-        photo.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (Hub.images().isEmpty()) {
-                    Toast.makeText(MainActivity.this, "Belum ada gambar. Hantar dari telefon (Remote > Gambar).", Toast.LENGTH_LONG).show();
-                } else {
-                    open(new Intent(MainActivity.this, ImageViewerActivity.class).putExtra("slideshow", true));
-                }
-            }
-        });
-        Tile set = hero(R_SET(), "Tetapan", "Launcher & sistem", 0xFF636366, 0xFF2C2C2E, "hero:settings");
-        set.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                open(new Intent(MainActivity.this, SettingsActivity.class));
-            }
-        });
-        hero.add(live);
-        hero.add(phone);
-        hero.add(photo);
-        hero.add(set);
-        content.addView(hero);
-        firstTile = live;
-        refocus = live;
-
-        // ---- kegemaran
-        List<AppInfo> favs = new ArrayList<>();
-        for (String p : Store.favorites(this)) for (AppInfo a : apps) if (a.pkg.equals(p)) favs.add(a);
-        if (!favs.isEmpty()) {
-            content.addView(section("KEGEMARAN"));
-            Rail r = newRail();
-            for (AppInfo a : favs) {
-                Tile t = appTile(a, "fav:");
-                r.add(t);
-                if (t.tag.equals(keepTitle)) refocus = t;
-            }
-            content.addView(r);
+                break;
+            case 1: showPage("settings"); break;
+            case 2: openSafe(new Intent(Settings.ACTION_WIFI_SETTINGS)); break;
+            default: showPage("remote"); break;
         }
+    }
 
-        // ---- semua apl (grid)
-        content.addView(section("SEMUA APL"));
-        int sw = getResources().getDisplayMetrics().widthPixels;
-        int cols = Math.max(3, (int) ((sw - 112 * d) / (150 * d)));
-        Rail row = null;
-        for (int i = 0; i < apps.size(); i++) {
-            if (i % cols == 0) {
-                row = newRail();
-                content.addView(row);
-            }
-            Tile t = appTile(apps.get(i), "app:");
-            row.add(t);
-            if (t.tag.equals(keepTitle)) refocus = t;
+    // ---------------------------------------------------------------- apl
+
+    /** Kad apl: banner TV jika ada, jika tidak ikon atas latar warna apl. */
+    Card appCard(final Apps.A app, float w, float h) {
+        Card c;
+        if (app.banner != null) {
+            c = new Card(this, 20, Ui.solid(0xFF1A1D26, S.px(20)));
+            ImageView b = new ImageView(this);
+            b.setScaleType(ImageView.ScaleType.FIT_XY);
+            b.setImageDrawable(app.banner);
+            c.addView(b, new FrameLayout.LayoutParams(-1, -1));
+        } else {
+            int col = app.color;
+            c = new Card(this, 20, Ui.grad(GradientDrawable.Orientation.TL_BR, S.px(20),
+                    (col & 0xFFFFFF) | 0xF0000000, HomePage.darker(col) | 0xF0000000));
+            ImageView ic = Ui.image(this, app.icon);
+            float is = Math.min(h * 0.46f, 72);
+            c.addView(ic, new FrameLayout.LayoutParams(S.px(is), S.px(is), Gravity.CENTER_HORIZONTAL | Gravity.TOP));
+            ((FrameLayout.LayoutParams) ic.getLayoutParams()).topMargin = S.px(h * 0.14f);
+            TextView t = Ui.text(this, app.label, 22, Ui.WHITE, Ui.MEDIUM);
+            t.setGravity(Gravity.CENTER);
+            FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+            tl.bottomMargin = S.px(h * 0.1f);
+            tl.leftMargin = tl.rightMargin = S.px(10);
+            c.addView(t, tl);
         }
-        final Tile rf = refocus;
-        content.post(new Runnable() {
-            @Override
-            public void run() {
-                if (getCurrentFocus() == null || !getCurrentFocus().isAttachedToWindow()) rf.requestFocus();
-            }
-        });
+        bindApp(c, app);
+        return c;
     }
 
-    private Drawable res(int id) {
-        return getResources().getDrawable(id);
-    }
-
-    private Drawable R_TV() { return res(R.drawable.ic_tv); }
-    private Drawable R_PHONE() { return res(R.drawable.ic_phone); }
-    private Drawable R_PHOTO() { return res(R.drawable.ic_photo); }
-    private Drawable R_SET() { return res(R.drawable.ic_settings); }
-
-    private Tile hero(Drawable icon, String title, String sub, int a, int b, String tag) {
-        Tile t = new Tile(this, icon, title, sub, true, a, b);
-        t.tag = tag;
-        return t;
-    }
-
-    private Tile appTile(final AppInfo a, String prefix) {
-        final Tile t = new Tile(this, a.icon, a.label, null, false, 0, 0);
-        t.tag = prefix + a.pkg;
-        t.setOnClickListener(new View.OnClickListener() {
+    void bindApp(Card c, final Apps.A app) {
+        c.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                open(a.launch);
+                launch(app);
             }
         });
-        t.setOnLongClickListener(new View.OnLongClickListener() {
+        c.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
-                appMenu(a);
+                appMenu(app);
                 return true;
             }
         });
-        return t;
     }
 
-    private void open(Intent i) {
+    void launch(Apps.A app) {
+        Store.recordLaunch(this, app.pkg);
+        if (open(app.launch)) dirty = true;
+    }
+
+    boolean open(Intent i) {
         try {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
             startActivity(i);
             overridePendingTransition(R.anim.launch_in, R.anim.launch_out);
+            return true;
         } catch (Exception e) {
-            Toast.makeText(this, "Tak dapat dibuka: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Tak dapat dibuka", Toast.LENGTH_SHORT).show();
+            return false;
         }
     }
 
-    private void appMenu(final AppInfo a) {
-        final boolean fav = Store.isFavorite(this, a.pkg);
-        new GlassMenu(this, a.label)
+    void openSafe(Intent i) {
+        try {
+            startActivity(i);
+        } catch (Exception e) {
+            Toast.makeText(this, "Tak disokong pada peranti ini", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    void openLive(int index) {
+        Intent i = new Intent(this, LiveTvActivity.class);
+        if (index >= 0) i.putExtra("index", index);
+        open(i);
+    }
+
+    void openGallery() {
+        if (Hub.images().isEmpty()) {
+            Toast.makeText(this, "Belum ada gambar. Hantar dari telefon (Remote › Gambar).", Toast.LENGTH_LONG).show();
+        } else {
+            open(new Intent(this, ImageViewerActivity.class).putExtra("slideshow", true));
+        }
+    }
+
+    private void appMenu(final Apps.A app) {
+        final boolean fav = Store.isFavorite(this, app.pkg);
+        new GlassMenu(this, app.label)
                 .add("Buka", new Runnable() {
                     @Override
                     public void run() {
-                        open(a.launch);
+                        launch(app);
                     }
                 })
                 .add(fav ? "Buang dari Kegemaran" : "Tambah ke Kegemaran", new Runnable() {
                     @Override
                     public void run() {
-                        Store.toggleFavorite(MainActivity.this, a.pkg);
-                        rebuild();
+                        Store.toggleFavorite(MainActivity.this, app.pkg);
+                        refreshCurrent();
                     }
                 })
                 .add("Maklumat Apl", new Runnable() {
                     @Override
                     public void run() {
-                        open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + a.pkg)));
+                        openSafe(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + app.pkg)));
                     }
                 })
                 .add("Nyahpasang", new Runnable() {
                     @Override
                     public void run() {
-                        open(new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + a.pkg)));
+                        openSafe(new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + app.pkg)));
                     }
                 })
                 .show();
     }
 
-    private void showRemoteInfo() {
-        new GlassMenu(this, "Kawal TV dari telefon")
-                .note("1. Sambung telefon ke Wi-Fi yang sama dengan TV.", 15, 0xCCFFFFFF)
-                .note("2. Buka pelayar telefon dan taip:", 15, 0xCCFFFFFF)
-                .note(U.remoteUrl(), 26, 0xFF64D2FF)
-                .note("3. Masukkan PIN:", 15, 0xCCFFFFFF)
-                .note(Store.pin(this), 34, Color.WHITE)
-                .note("Boleh remote, hantar gambar, pilih saluran TV, buka apl & taip teks.", 13, 0x99FFFFFF)
-                .add("Tutup", null)
-                .show();
-    }
+    // ---------------------------------------------------------------- kekunci
 
     @Override
-    public void onRailFocus(Rail r, Tile t) {
-        int target = (int) (r.getTop() - 110 * d);
-        scroll.smoothScrollTo(0, Math.max(0, target));
+    public void onNewIntent(Intent i) {
+        super.onNewIntent(i);
+        // butang Home ditekan semasa dalam launcher
+        if (!"home".equals(current)) showPage("home");
+        Page p = pages.get("home");
+        if (p != null && p.first() != null) p.first().requestFocus();
     }
 
     @Override
@@ -440,10 +445,10 @@ public class MainActivity extends BaseActivity implements Rail.Host {
 
     @Override
     public void onBackPressed() {
-        // launcher: Back kembali ke atas, tak keluar
-        if (firstTile != null) {
-            scroll.smoothScrollTo(0, 0);
-            firstTile.requestFocus();
+        if (!"home".equals(current)) {
+            showPage("home");
         }
+        Page p = pages.get("home");
+        if (p != null && p.first() != null) p.first().requestFocus();
     }
 }

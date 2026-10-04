@@ -94,7 +94,7 @@ final class Hub {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(15000);
         c.setReadTimeout(20000);
-        c.setRequestProperty("User-Agent", "AqilLauncher/2.0");
+        c.setRequestProperty("User-Agent", UA);
         if (c.getResponseCode() / 100 != 2) throw new Exception("HTTP " + c.getResponseCode());
         File tmp = new File(dest.getPath() + ".tmp");
         try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(tmp)) {
@@ -110,26 +110,113 @@ final class Hub {
     static List<Channel> parse(File f) throws Exception {
         List<Channel> out = new ArrayList<>();
         try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"))) {
-            String line, name = null, group = "";
+            String line, name = null, group = "", logo = "", ua = null, ref = null, origin = null, drmType = null, drmKey = null;
             while ((line = br.readLine()) != null) {
                 line = line.trim();
                 if (line.startsWith("#EXTINF")) {
                     int comma = line.lastIndexOf(',');
                     name = comma >= 0 ? line.substring(comma + 1).trim() : "Saluran";
-                    group = "";
-                    Matcher m = ATTR.matcher(line);
-                    while (m.find()) if (m.group(1).equals("group-title")) group = m.group(2);
+                    Matcher m = ATTR.matcher(comma >= 0 ? line.substring(0, comma) : line);
+                    while (m.find()) {
+                        if (m.group(1).equals("group-title")) group = m.group(2);
+                        else if (m.group(1).equals("tvg-logo")) logo = m.group(2);
+                        else if (m.group(1).equals("http-user-agent") || m.group(1).equals("user-agent")) ua = m.group(2);
+                        else if (m.group(1).equals("http-referrer")) ref = m.group(2);
+                    }
+                } else if (line.startsWith("#EXTVLCOPT:")) {
+                    String o = line.substring(11);
+                    if (o.startsWith("http-user-agent=")) ua = o.substring(16);
+                    else if (o.startsWith("http-referrer=")) ref = o.substring(14);
+                    else if (o.startsWith("http-origin=")) origin = o.substring(12);
+                } else if (line.startsWith("#KODIPROP:")) {
+                    String o = line.substring(10);
+                    if (o.startsWith("inputstream.adaptive.license_type=")) drmType = o.substring(34).trim();
+                    else if (o.startsWith("inputstream.adaptive.license_key=")) drmKey = o.substring(33).trim();
+                } else if (line.startsWith("#EXTGRP:")) {
+                    group = line.substring(8).trim();
                 } else if (!line.isEmpty() && !line.startsWith("#")) {
-                    if (line.startsWith("http")) {
-                        out.add(new Channel(name == null || name.isEmpty() ? "Saluran " + (out.size() + 1) : name, line, group));
+                    String url = line;
+                    int bar = url.indexOf('|');
+                    if (bar > 0) { // gaya Kodi: url|User-Agent=..&Referer=..
+                        for (String kv : url.substring(bar + 1).split("&")) {
+                            String[] p = kv.split("=", 2);
+                            if (p.length < 2) continue;
+                            String k = p[0].toLowerCase();
+                            String v = java.net.URLDecoder.decode(p[1], "UTF-8");
+                            if (k.equals("user-agent")) ua = v;
+                            else if (k.equals("referer") || k.equals("referrer")) ref = v;
+                            else if (k.equals("origin")) origin = v;
+                        }
+                        url = url.substring(0, bar);
+                    }
+                    if (url.startsWith("http")) {
+                        Channel c = new Channel(name == null || name.isEmpty() ? "Saluran " + (out.size() + 1) : name, url, group, logo);
+                        c.ua = ua;
+                        c.referer = ref;
+                        c.origin = origin;
+                        c.drmType = drmType;
+                        c.drmKey = drmKey;
+                        out.add(c);
                     }
                     name = null;
                     group = "";
+                    logo = "";
+                    ua = ref = origin = drmType = drmKey = null;
                 }
             }
         }
         return out;
     }
+
+    /** Semak saluran mana yang hidup (8 serentak). Panggil balik di thread utama bila siap. */
+    static void probe(final Runnable done) {
+        final List<Channel> list = channels;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(8);
+                for (final Channel c : list) {
+                    ex.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            c.alive = check(c);
+                        }
+                    });
+                }
+                ex.shutdown();
+                try {
+                    ex.awaitTermination(10, java.util.concurrent.TimeUnit.MINUTES);
+                } catch (InterruptedException ignored) {
+                }
+                if (done != null) main.post(done);
+            }
+        }, "probe").start();
+    }
+
+    private static boolean check(Channel c) {
+        HttpURLConnection con = null;
+        try {
+            con = (HttpURLConnection) new URL(c.url).openConnection();
+            con.setConnectTimeout(7000);
+            con.setReadTimeout(7000);
+            con.setInstanceFollowRedirects(true);
+            con.setRequestProperty("User-Agent", c.ua != null ? c.ua : UA);
+            if (c.referer != null) con.setRequestProperty("Referer", c.referer);
+            con.setRequestProperty("Range", "bytes=0-2047");
+            int code = con.getResponseCode();
+            if (code / 100 != 2) return false;
+            InputStream in = con.getInputStream();
+            byte[] b = new byte[512];
+            int n = in.read(b);
+            return n > 0;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (con != null) con.disconnect();
+        }
+    }
+
+    static final String UA = "Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
     static void playChannel(int index) {
         BaseActivity t = top();
@@ -164,8 +251,8 @@ final class Hub {
         return l;
     }
 
-    static File wallpaperFile() {
-        return new File(app.getFilesDir(), "wallpaper.jpg");
+    static File videoWallpaperFile() {
+        return new File(app.getFilesDir(), "wallpaper.mp4");
     }
 
     static void showImage(String name, boolean slideshow) {
@@ -179,7 +266,9 @@ final class Hub {
         }
     }
 
-    static void wallpaperChanged() {
+    /** Tukar wallpaper (aurora, nebula, grad:night, grad:dusk, photo:NAMA, video). */
+    static void setWallpaper(String spec) {
+        Store.setWallpaper(app, spec);
         BaseActivity t = top();
         if (t instanceof MainActivity) ((MainActivity) t).reloadWallpaper();
     }

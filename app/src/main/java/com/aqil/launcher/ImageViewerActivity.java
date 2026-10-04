@@ -15,8 +15,6 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -49,19 +47,12 @@ public class ImageViewerActivity extends BaseActivity {
         front = newImage();
         root.addView(back);
         root.addView(front);
-        caption = new TextView(this) {
-            @Override
-            protected void onDraw(android.graphics.Canvas c) {
-                Glass.plate(c, d, 0, 0, getWidth(), getHeight(), getHeight() / 2f, 0f, 0, 0, -1f);
-                super.onDraw(c);
-            }
-        };
-        caption.setTextColor(Color.WHITE);
-        caption.setTextSize(15);
-        caption.setPadding((int) (22 * d), (int) (10 * d), (int) (22 * d), (int) (10 * d));
+        caption = Ui.text(this, "", 26, Color.WHITE, Ui.MEDIUM);
+        caption.setBackground(Ui.glass(S.px(30)));
+        caption.setPadding(S.px(30), S.px(14), S.px(30), S.px(14));
         caption.setAlpha(0f);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        lp.bottomMargin = (int) (36 * d);
+        lp.bottomMargin = S.px(50);
         root.addView(caption, lp);
         setContentView(root);
         root.setFocusable(true);
@@ -197,21 +188,8 @@ public class ImageViewerActivity extends BaseActivity {
                 .add("Jadikan wallpaper launcher", new Runnable() {
                     @Override
                     public void run() {
-                        IO.execute(new Runnable() {
-                            @Override
-                            public void run() {
-                                try (OutputStream o = new FileOutputStream(Hub.wallpaperFile())) {
-                                    decode(f, 1920, 1080).compress(Bitmap.CompressFormat.JPEG, 90, o);
-                                } catch (Exception ignored) {
-                                }
-                                runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        Toast.makeText(ImageViewerActivity.this, "Wallpaper ditetapkan", Toast.LENGTH_SHORT).show();
-                                    }
-                                });
-                            }
-                        });
+                        Hub.setWallpaper("photo:" + f.getName());
+                        Toast.makeText(ImageViewerActivity.this, "Wallpaper ditetapkan", Toast.LENGTH_SHORT).show();
                     }
                 })
                 .add("Padam gambar ini", new Runnable() {

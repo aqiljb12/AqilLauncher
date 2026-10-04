@@ -63,6 +63,68 @@ final class Store {
         p(c).edit().putString("favs", sb.toString()).apply();
     }
 
+    static void setFavorites(Context c, List<String> f) {
+        StringBuilder sb = new StringBuilder();
+        for (String x : f) sb.append(x).append('\n');
+        p(c).edit().putString("favs", sb.toString()).putBoolean("favsInit", true).apply();
+    }
+
+    static boolean favoritesInitialised(Context c) {
+        return p(c).getBoolean("favsInit", false);
+    }
+
+    // ---- baru dibuka ----
+
+    static void recordLaunch(Context c, String pkg) {
+        List<String[]> r = recents(c);
+        StringBuilder sb = new StringBuilder(pkg).append('|').append(System.currentTimeMillis()).append('\n');
+        int n = 1;
+        for (String[] x : r) {
+            if (x[0].equals(pkg) || n >= 12) continue;
+            sb.append(x[0]).append('|').append(x[1]).append('\n');
+            n++;
+        }
+        p(c).edit().putString("recents", sb.toString()).apply();
+    }
+
+    /** [pkg, masa] terbaru dulu. */
+    static List<String[]> recents(Context c) {
+        List<String[]> out = new ArrayList<>();
+        for (String line : p(c).getString("recents", "").split("\n")) {
+            String[] kv = line.split("\\|");
+            if (kv.length == 2) out.add(kv);
+        }
+        return out;
+    }
+
+    // ---- wallpaper & cuaca ----
+
+    /** aurora | nebula | grad:night | grad:dusk | photo:NAMA | video */
+    static String wallpaper(Context c) {
+        return p(c).getString("wall", "aurora");
+    }
+
+    static void setWallpaper(Context c, String spec) {
+        p(c).edit().putString("wall", spec).apply();
+    }
+
+    static String[] weatherPlace(Context c) {
+        String s = p(c).getString("wplace", null);
+        return s == null ? null : s.split("\\|");
+    }
+
+    static void setWeatherPlace(Context c, String name, double lat, double lon) {
+        p(c).edit().putString("wplace", name + "|" + lat + "|" + lon).apply();
+    }
+
+    static boolean autoSkip(Context c) {
+        return p(c).getBoolean("autoSkip", true);
+    }
+
+    static void setAutoSkip(Context c, boolean on) {
+        p(c).edit().putBoolean("autoSkip", on).apply();
+    }
+
     // ---- pairing ----
 
     static synchronized String pin(Context c) {

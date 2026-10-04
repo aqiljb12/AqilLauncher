@@ -2,17 +2,18 @@ package com.aqil.launcher;
 
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.util.Base64;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -20,13 +21,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URLDecoder;
+import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -38,16 +38,22 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-/** Server HTTP kecil (tanpa pustaka) yang hidangkan halaman remote untuk telefon + API kawalan. */
+/**
+ * Server HTTP + WebSocket kecil (tanpa pustaka). Halaman remote untuk telefon, API kawalan,
+ * dan WebSocket untuk kekunci (sambungan kekal = respons pantas & stabil).
+ */
 final class RemoteServer {
-    static volatile int port = 8080;
-    private static final int MAX_BODY = 48 * 1024 * 1024;
+    /** Port tetap dulu (supaya alamat tak berubah-ubah), kemudian alternatif. */
+    private static final int[] PORTS = {8686, 8687, 8688, 8080, 8888, 9090};
+    static volatile int port = PORTS[0];
+    private static final int MAX_JSON = 1024 * 1024;
+    private static final long MAX_UPLOAD = 300L * 1024 * 1024;
 
     private final Context ctx;
     private final ExecutorService pool = Executors.newCachedThreadPool();
     private volatile ServerSocket server;
     private volatile boolean running;
-    private final Map<String, long[]> fails = new HashMap<>(); // ip -> {count, lockedUntil}
+    private final Map<String, long[]> fails = new HashMap<>();
     private final Map<String, byte[]> iconCache = new HashMap<>();
 
     RemoteServer(Context c) {
@@ -56,30 +62,34 @@ final class RemoteServer {
 
     void start() {
         running = true;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                for (int p = 8080; p < 8100 && running; p++) {
+        new Thread(() -> {
+            while (running && server == null) {
+                for (int p : PORTS) {
                     try {
-                        server = new ServerSocket(p);
+                        ServerSocket s = new ServerSocket();
+                        s.setReuseAddress(true);
+                        s.bind(new InetSocketAddress(p));
+                        server = s;
                         port = p;
                         break;
                     } catch (IOException ignored) {
                     }
                 }
-                if (server == null) return;
-                while (running) {
+                if (server == null) {
                     try {
-                        final Socket s = server.accept();
-                        pool.execute(new Runnable() {
-                            @Override
-                            public void run() {
-                                serve(s);
-                            }
-                        });
-                    } catch (IOException e) {
-                        if (!running) break;
+                        Thread.sleep(3000);
+                    } catch (InterruptedException e) {
+                        return;
                     }
+                }
+            }
+            while (running) {
+                try {
+                    final Socket s = server.accept();
+                    s.setTcpNoDelay(true);
+                    pool.execute(() -> serve(s));
+                } catch (IOException e) {
+                    if (!running) break;
                 }
             }
         }, "remote-accept").start();
@@ -97,11 +107,12 @@ final class RemoteServer {
     // ------------------------------------------------------------------ HTTP
 
     private static final class Req {
-        String method, path;
+        String method, path, ip;
         Map<String, String> q = new HashMap<>();
         Map<String, String> h = new HashMap<>();
-        byte[] body = new byte[0];
-        String ip;
+        InputStream in;
+        long len;
+        private byte[] body;
 
         String cookie(String name) {
             String c = h.get("cookie");
@@ -113,12 +124,44 @@ final class RemoteServer {
             return null;
         }
 
+        byte[] body() throws IOException {
+            if (body == null) {
+                if (len > MAX_JSON) throw new IOException("terlalu besar");
+                body = new byte[(int) Math.max(0, len)];
+                int off = 0;
+                while (off < body.length) {
+                    int k = in.read(body, off, body.length - off);
+                    if (k < 0) throw new IOException("putus");
+                    off += k;
+                }
+            }
+            return body;
+        }
+
         JSONObject json() {
             try {
-                return new JSONObject(new String(body, "UTF-8"));
+                return new JSONObject(new String(body(), "UTF-8"));
             } catch (Exception e) {
                 return new JSONObject();
             }
+        }
+
+        /** Salin badan permintaan terus ke fail (untuk gambar/video besar, tanpa guna memori). */
+        void saveTo(File f) throws IOException {
+            if (len > MAX_UPLOAD) throw new IOException("Fail terlalu besar (maks 300MB)");
+            File tmp = new File(f.getPath() + ".part");
+            try (OutputStream out = new FileOutputStream(tmp)) {
+                byte[] buf = new byte[64 * 1024];
+                long left = len;
+                while (left > 0) {
+                    int k = in.read(buf, 0, (int) Math.min(buf.length, left));
+                    if (k < 0) throw new IOException("putus");
+                    out.write(buf, 0, k);
+                    left -= k;
+                }
+            }
+            if (f.exists()) f.delete();
+            if (!tmp.renameTo(f)) throw new IOException("gagal simpan");
         }
     }
 
@@ -126,22 +169,12 @@ final class RemoteServer {
         int code = 200;
         String type = "application/json; charset=utf-8";
         byte[] body = new byte[0];
-        String setCookie;
-        String cache;
+        String setCookie, cache;
 
-        static Res json(JSONObject o) {
+        static Res json(Object o) {
             Res r = new Res();
             try {
                 r.body = o.toString().getBytes("UTF-8");
-            } catch (Exception ignored) {
-            }
-            return r;
-        }
-
-        static Res json(JSONArray a) {
-            Res r = new Res();
-            try {
-                r.body = a.toString().getBytes("UTF-8");
             } catch (Exception ignored) {
             }
             return r;
@@ -151,7 +184,6 @@ final class RemoteServer {
             return json(obj("ok", true));
         }
 
-        /** err == null => OK, selain itu {ok:false,msg:err}. */
         static Res result(String err) {
             if (err == null) return ok();
             JSONObject o = obj("ok", false);
@@ -160,12 +192,10 @@ final class RemoteServer {
         }
 
         static Res error(int code, String msg) {
-            Res r = json(obj("ok", false));
+            JSONObject o = obj("ok", false);
+            put(o, "msg", msg);
+            Res r = json(o);
             r.code = code;
-            try {
-                r.body = new JSONObject().put("ok", false).put("msg", msg).toString().getBytes("UTF-8");
-            } catch (Exception ignored) {
-            }
             return r;
         }
     }
@@ -186,14 +216,18 @@ final class RemoteServer {
     private void serve(Socket s) {
         try {
             s.setSoTimeout(30000);
-            InputStream in = new java.io.BufferedInputStream(s.getInputStream());
-            Req r = readRequest(in);
+            InputStream in = new BufferedInputStream(s.getInputStream());
+            Req r = readHead(in);
             r.ip = s.getInetAddress().getHostAddress();
+            if ("websocket".equalsIgnoreCase(r.h.get("upgrade")) && r.path.equals("/ws")) {
+                websocket(s, in, r);
+                return;
+            }
             Res res;
             try {
                 res = route(r);
             } catch (Exception e) {
-                res = Res.error(500, String.valueOf(e));
+                res = Res.error(500, String.valueOf(e.getMessage()));
             }
             write(s.getOutputStream(), res);
         } catch (Exception ignored) {
@@ -205,7 +239,7 @@ final class RemoteServer {
         }
     }
 
-    private Req readRequest(InputStream in) throws IOException {
+    private Req readHead(InputStream in) throws IOException {
         ByteArrayOutputStream head = new ByteArrayOutputStream();
         int a = 0, b = 0, c = 0, d;
         while ((d = in.read()) != -1) {
@@ -219,6 +253,7 @@ final class RemoteServer {
         String[] lines = head.toString("UTF-8").split("\r\n");
         String[] first = lines[0].split(" ");
         Req r = new Req();
+        r.in = in;
         r.method = first[0];
         String target = first.length > 1 ? first[1] : "/";
         int qi = target.indexOf('?');
@@ -234,18 +269,7 @@ final class RemoteServer {
             if (ci > 0) r.h.put(lines[i].substring(0, ci).trim().toLowerCase(Locale.ROOT), lines[i].substring(ci + 1).trim());
         }
         String cl = r.h.get("content-length");
-        if (cl != null) {
-            int n = Integer.parseInt(cl);
-            if (n > MAX_BODY) throw new IOException("terlalu besar");
-            byte[] body = new byte[n];
-            int off = 0;
-            while (off < n) {
-                int k = in.read(body, off, n - off);
-                if (k < 0) throw new IOException("putus");
-                off += k;
-            }
-            r.body = body;
-        }
+        r.len = cl == null ? 0 : Long.parseLong(cl.trim());
         return r;
     }
 
@@ -258,19 +282,100 @@ final class RemoteServer {
     }
 
     private void write(OutputStream out, Res r) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        sb.append("HTTP/1.1 ").append(r.code).append(r.code == 200 ? " OK" : " ERR").append("\r\n");
-        sb.append("Content-Type: ").append(r.type).append("\r\n");
-        sb.append("Content-Length: ").append(r.body.length).append("\r\n");
-        sb.append("Cache-Control: ").append(r.cache == null ? "no-store" : r.cache).append("\r\n");
-        if (r.setCookie != null) sb.append("Set-Cookie: ").append(r.setCookie).append("\r\n");
-        sb.append("Connection: close\r\n\r\n");
-        out.write(sb.toString().getBytes("UTF-8"));
+        String head = "HTTP/1.1 " + r.code + (r.code == 200 ? " OK" : " ERR") + "\r\n"
+                + "Content-Type: " + r.type + "\r\n"
+                + "Content-Length: " + r.body.length + "\r\n"
+                + "Cache-Control: " + (r.cache == null ? "no-store" : r.cache) + "\r\n"
+                + (r.setCookie != null ? "Set-Cookie: " + r.setCookie + "\r\n" : "")
+                + "Connection: close\r\n\r\n";
+        out.write(head.getBytes("UTF-8"));
         out.write(r.body);
         out.flush();
     }
 
-    // ------------------------------------------------------------------ routes
+    // ------------------------------------------------------------------ WebSocket
+
+    private void websocket(Socket s, InputStream in, Req r) throws Exception {
+        OutputStream out = s.getOutputStream();
+        if (!Store.validToken(ctx, r.cookie("t"))) {
+            write(out, Res.error(401, "Perlu PIN"));
+            return;
+        }
+        String key = r.h.get("sec-websocket-key");
+        String accept = Base64.encodeToString(MessageDigest.getInstance("SHA-1")
+                .digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").getBytes("UTF-8")), Base64.NO_WRAP);
+        out.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                + "Sec-WebSocket-Accept: " + accept + "\r\n\r\n").getBytes("UTF-8"));
+        out.flush();
+        s.setSoTimeout(90000); // telefon hantar ping setiap 20s
+        while (running) {
+            int b0 = in.read(), b1 = in.read();
+            if (b0 < 0 || b1 < 0) return;
+            int op = b0 & 0x0F;
+            long len = b1 & 0x7F;
+            if (len == 126) len = (in.read() << 8) | in.read();
+            else if (len == 127) {
+                len = 0;
+                for (int i = 0; i < 8; i++) len = (len << 8) | in.read();
+            }
+            if (len > 65536) return;
+            byte[] mask = new byte[4];
+            if ((b1 & 0x80) != 0) for (int i = 0; i < 4; i++) mask[i] = (byte) in.read();
+            byte[] data = new byte[(int) len];
+            int off = 0;
+            while (off < len) {
+                int k = in.read(data, off, (int) len - off);
+                if (k < 0) return;
+                off += k;
+            }
+            for (int i = 0; i < data.length; i++) data[i] ^= mask[i % 4];
+            if (op == 8) {
+                wsSend(out, 8, new byte[0]);
+                return;
+            } else if (op == 9) {
+                wsSend(out, 10, data);
+            } else if (op == 1) {
+                String reply = wsMessage(new String(data, "UTF-8"));
+                if (reply != null) wsSend(out, 1, reply.getBytes("UTF-8"));
+            }
+        }
+    }
+
+    private static synchronized void wsSend(OutputStream out, int op, byte[] data) throws IOException {
+        ByteArrayOutputStream f = new ByteArrayOutputStream();
+        f.write(0x80 | op);
+        if (data.length < 126) f.write(data.length);
+        else {
+            f.write(126);
+            f.write(data.length >> 8);
+            f.write(data.length & 0xFF);
+        }
+        f.write(data);
+        out.write(f.toByteArray());
+        out.flush();
+    }
+
+    /** {"id":1,"k":"up"} | {"id":2,"t":"tap","x":..,"y":..} | {"ping":1} */
+    private String wsMessage(String msg) {
+        try {
+            JSONObject j = new JSONObject(msg);
+            if (j.has("ping")) return "{\"pong\":1}";
+            String err;
+            if (j.has("k")) err = RemoteControl.key(ctx, j.getString("k"));
+            else if (j.has("t")) err = RemoteControl.touch(j.getString("t"), (float) j.optDouble("x"), (float) j.optDouble("y"),
+                    (float) j.optDouble("x2"), (float) j.optDouble("y2"));
+            else return null;
+            JSONObject o = new JSONObject();
+            o.put("id", j.optInt("id"));
+            o.put("ok", err == null);
+            if (err != null) o.put("msg", err);
+            return o.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------ laluan
 
     private Res route(Req r) throws Exception {
         String p = r.path;
@@ -288,13 +393,16 @@ final class RemoteServer {
             case "/api/apps": return apps();
             case "/api/icon": return icon(r.q.get("pkg"));
             case "/api/key": return Res.result(RemoteControl.key(ctx, r.json().optString("k")));
-            case "/api/launch": return Res.result(RemoteControl.launch(ctx, r.json().optString("pkg")));
+            case "/api/launch": {
+                String pkg = r.json().optString("pkg");
+                String err = RemoteControl.launch(ctx, pkg);
+                if (err == null) Store.recordLaunch(ctx, pkg);
+                return Res.result(err);
+            }
             case "/api/url": return Res.result(RemoteControl.openUrl(ctx, r.json().optString("url")));
             case "/api/text": {
                 JSONObject j = r.json();
-                String t = j.optString("text");
-                String err = RemoteControl.text(t, j.optBoolean("append", false));
-                return Res.result(err);
+                return Res.result(RemoteControl.text(j.optString("text"), j.optBoolean("append", false)));
             }
             case "/api/touch": {
                 JSONObject j = r.json();
@@ -305,45 +413,51 @@ final class RemoteServer {
             case "/api/play": {
                 final int i = r.json().optInt("i", -1);
                 if (i < 0 || i >= Hub.channels.size()) return Res.error(400, "Saluran tak sah");
-                Hub.main.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        Hub.playChannel(i);
-                    }
-                });
+                Hub.main.post(() -> Hub.playChannel(i));
                 return Res.ok();
             }
             case "/api/playlist": return playlist(r.json().optString("url").trim());
+            case "/api/probe": {
+                Hub.probe(null);
+                return Res.ok();
+            }
             case "/api/upload": return upload(r);
+            case "/api/upload/video": return uploadVideo(r);
             case "/api/images": return images();
             case "/img": return image(r);
             case "/api/image/show": {
-                final String n = safe(r.json().optString("name"));
-                final boolean slide = r.json().optBoolean("slideshow", false);
+                JSONObject j = r.json();
+                final String n = safe(j.optString("name"));
+                final boolean slide = j.optBoolean("slideshow", false);
                 if (n == null || !new File(Hub.imagesDir(), n).exists()) return Res.error(404, "Tiada gambar");
-                Hub.main.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        Hub.showImage(n, slide);
-                    }
-                });
+                Hub.main.post(() -> Hub.showImage(n, slide));
                 return Res.ok();
             }
-            case "/api/image/wall": return wall(safe(r.json().optString("name")));
+            case "/api/image/wall": {
+                final String n = safe(r.json().optString("name"));
+                if (n == null || !new File(Hub.imagesDir(), n).exists()) return Res.error(404, "Tiada gambar");
+                Hub.main.post(() -> Hub.setWallpaper("photo:" + n));
+                return Res.ok();
+            }
             case "/api/image/delete": {
                 String n = safe(r.json().optString("name"));
                 if (n != null) new File(Hub.imagesDir(), n).delete();
                 return Res.ok();
             }
-            case "/api/wall/clear":
-                Hub.wallpaperFile().delete();
-                Hub.main.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        Hub.wallpaperChanged();
-                    }
-                });
+            case "/api/wallpaper": {
+                final String spec = r.json().optString("spec", "aurora");
+                if (!spec.matches("aurora|nebula|video|grad:night|grad:dusk")) return Res.error(400, "Tak sah");
+                if (spec.equals("video") && !Hub.videoWallpaperFile().exists()) return Res.error(404, "Belum ada video");
+                Hub.main.post(() -> Hub.setWallpaper(spec));
                 return Res.ok();
+            }
+            case "/api/weather": {
+                String name = Weather.setCity(ctx, r.json().optString("city"));
+                if (name == null) return Res.error(404, "Bandar tak dijumpai");
+                JSONObject o = obj("ok", true);
+                put(o, "place", name);
+                return Res.json(o);
+            }
             default:
                 return Res.error(404, "Tak jumpa");
         }
@@ -354,14 +468,14 @@ final class RemoteServer {
         synchronized (fails) {
             f = fails.get(r.ip);
             if (f == null) fails.put(r.ip, f = new long[2]);
-            if (System.currentTimeMillis() < f[1]) return Res.error(429, "Terlalu banyak cubaan. Tunggu sebentar.");
+            if (System.currentTimeMillis() < f[1]) return Res.error(429, "Terlalu banyak cubaan. Tunggu 30 saat.");
         }
         if (r.json().optString("pin").equals(Store.pin(ctx))) {
             synchronized (fails) {
                 f[0] = 0;
             }
             Res res = Res.ok();
-            res.setCookie = "t=" + Store.addToken(ctx) + "; Path=/; Max-Age=31536000; HttpOnly";
+            res.setCookie = "t=" + Store.addToken(ctx) + "; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax";
             return res;
         }
         synchronized (fails) {
@@ -380,39 +494,25 @@ final class RemoteServer {
         put(o, "channels", Hub.channels.size());
         put(o, "playing", Hub.playing);
         put(o, "playlist", Store.playlist(ctx));
-        put(o, "sdk", android.os.Build.VERSION.SDK_INT);
+        put(o, "wall", Store.wallpaper(ctx));
+        put(o, "video", Hub.videoWallpaperFile().exists());
+        put(o, "place", Weather.place);
+        put(o, "temp", Weather.tempText());
         BaseActivity t = Hub.top();
-        put(o, "screen", t == null ? "luar" : t.getClass().getSimpleName());
+        put(o, "screen", t == null ? "Apl lain" : t instanceof MainActivity ? "Launcher" : t instanceof LiveTvActivity ? "Live TV" : "Galeri");
         return Res.json(o);
     }
 
-    private List<ResolveInfo> launchables() {
-        PackageManager pm = ctx.getPackageManager();
-        Set<String> seen = new HashSet<>();
-        List<ResolveInfo> out = new ArrayList<>();
-        for (String cat : new String[]{Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
-            for (ResolveInfo ri : pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(cat), 0)) {
-                String pkg = ri.activityInfo.packageName;
-                if (pkg.equals(ctx.getPackageName()) || !seen.add(pkg)) continue;
-                out.add(ri);
-            }
-        }
-        final PackageManager fpm = pm;
-        Collections.sort(out, new Comparator<ResolveInfo>() {
-            @Override
-            public int compare(ResolveInfo a, ResolveInfo b) {
-                return a.loadLabel(fpm).toString().compareToIgnoreCase(b.loadLabel(fpm).toString());
-            }
-        });
-        return out;
-    }
-
     private Res apps() throws Exception {
-        PackageManager pm = ctx.getPackageManager();
-        JSONArray a = new JSONArray();
-        for (ResolveInfo ri : launchables()) {
-            a.put(new JSONObject().put("pkg", ri.activityInfo.packageName).put("label", ri.loadLabel(pm).toString()));
+        List<Apps.A> list = Apps.all;
+        if (list.isEmpty()) {
+            final CountDownLatch l = new CountDownLatch(1);
+            Apps.load(ctx, l::countDown);
+            l.await(10, TimeUnit.SECONDS);
+            list = Apps.all;
         }
+        JSONArray a = new JSONArray();
+        for (Apps.A x : list) a.put(new JSONObject().put("pkg", x.pkg).put("label", x.label));
         return Res.json(a);
     }
 
@@ -424,10 +524,9 @@ final class RemoteServer {
         }
         if (png == null) {
             Drawable d = ctx.getPackageManager().getApplicationIcon(pkg);
-            Bitmap b = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888);
-            Canvas c = new Canvas(b);
-            d.setBounds(0, 0, 96, 96);
-            d.draw(c);
+            Bitmap b = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
+            d.setBounds(0, 0, 128, 128);
+            d.draw(new Canvas(b));
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             b.compress(Bitmap.CompressFormat.PNG, 100, bo);
             b.recycle();
@@ -443,11 +542,12 @@ final class RemoteServer {
         return r;
     }
 
-    private Res channels() {
+    private Res channels() throws Exception {
         JSONArray a = new JSONArray();
         List<Channel> l = Hub.channels;
         for (int i = 0; i < l.size(); i++) {
-            a.put(new JSONArray().put(i).put(l.get(i).name).put(l.get(i).group));
+            Channel c = l.get(i);
+            a.put(new JSONArray().put(i).put(c.name).put(c.group).put(c.logo).put(c.alive == null ? 0 : c.alive ? 1 : -1));
         }
         return Res.json(a);
     }
@@ -458,13 +558,10 @@ final class RemoteServer {
         final CountDownLatch latch = new CountDownLatch(1);
         final int[] count = {0};
         final String[] err = {null};
-        Hub.loadChannels(true, new Hub.Done() {
-            @Override
-            public void run(int n, String e) {
-                count[0] = n;
-                err[0] = e;
-                latch.countDown();
-            }
+        Hub.loadChannels(true, (n, e) -> {
+            count[0] = n;
+            err[0] = e;
+            latch.countDown();
         });
         latch.await(40, TimeUnit.SECONDS);
         JSONObject o = new JSONObject();
@@ -474,36 +571,39 @@ final class RemoteServer {
         return Res.json(o);
     }
 
-    // ------------------------------------------------------------------ gambar
+    // ------------------------------------------------------------------ gambar & video
 
-    /** Nama fail selamat (tiada path traversal). */
     private static String safe(String n) {
         if (n == null || n.isEmpty() || n.contains("/") || n.contains("\\") || n.contains("..")) return null;
         return n;
     }
 
     private Res upload(Req r) throws Exception {
-        if (r.body.length == 0) return Res.error(400, "Kosong");
-        BitmapFactory.Options o = new BitmapFactory.Options();
-        o.inJustDecodeBounds = true;
-        BitmapFactory.decodeByteArray(r.body, 0, r.body.length, o);
-        if (o.outWidth <= 0) return Res.error(415, "Bukan gambar yang sah");
+        if (r.len <= 0) return Res.error(400, "Kosong");
         String name = System.currentTimeMillis() + "_" + (int) (Math.random() * 1000) + ".jpg";
         File f = new File(Hub.imagesDir(), name);
-        try (OutputStream out = new FileOutputStream(f)) {
-            out.write(r.body);
+        r.saveTo(f);
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getPath(), o);
+        if (o.outWidth <= 0) {
+            f.delete();
+            return Res.error(415, "Bukan gambar yang sah");
         }
-        if ("1".equals(r.q.get("show"))) {
-            final String n = name;
-            final boolean slide = false;
-            Hub.main.post(new Runnable() {
-                @Override
-                public void run() {
-                    Hub.showImage(n, slide);
-                }
-            });
-        }
+        if ("1".equals(r.q.get("show"))) Hub.main.post(() -> Hub.showImage(name, false));
+        if ("1".equals(r.q.get("wall"))) Hub.main.post(() -> Hub.setWallpaper("photo:" + name));
         return Res.json(obj("name", name));
+    }
+
+    private Res uploadVideo(Req r) throws Exception {
+        if (r.len <= 0) return Res.error(400, "Kosong");
+        File f = Hub.videoWallpaperFile();
+        r.saveTo(f);
+        Hub.main.post(() -> {
+            Store.setWallpaper(ctx, "aurora"); // paksa muat semula walaupun spec sama
+            Hub.setWallpaper("video");
+        });
+        return Res.ok();
     }
 
     private Res images() throws Exception {
@@ -520,36 +620,15 @@ final class RemoteServer {
         res.type = "image/jpeg";
         res.cache = "max-age=86400";
         if ("1".equals(r.q.get("thumb"))) {
-            BitmapFactory.Options o = new BitmapFactory.Options();
-            o.inSampleSize = 4;
-            Bitmap b = BitmapFactory.decodeFile(f.getPath(), o);
+            Bitmap b = ImageViewerActivity.decode(f, 240, 240);
             if (b == null) return Res.error(415, "Rosak");
-            Bitmap s = Bitmap.createScaledBitmap(b, 240, Math.max(1, b.getHeight() * 240 / b.getWidth()), true);
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
-            s.compress(Bitmap.CompressFormat.JPEG, 75, bo);
+            b.compress(Bitmap.CompressFormat.JPEG, 75, bo);
             res.body = bo.toByteArray();
         } else {
             res.body = readAll(new FileInputStream(f));
         }
         return res;
-    }
-
-    private Res wall(String n) throws Exception {
-        if (n == null) return Res.error(400, "Nama tak sah");
-        File src = new File(Hub.imagesDir(), n);
-        if (!src.exists()) return Res.error(404, "Tiada gambar");
-        Bitmap b = ImageViewerActivity.decode(src, 1920, 1080);
-        if (b == null) return Res.error(415, "Rosak");
-        try (OutputStream out = new FileOutputStream(Hub.wallpaperFile())) {
-            b.compress(Bitmap.CompressFormat.JPEG, 90, out);
-        }
-        Hub.main.post(new Runnable() {
-            @Override
-            public void run() {
-                Hub.wallpaperChanged();
-            }
-        });
-        return Res.ok();
     }
 
     private static byte[] readAll(InputStream in) throws IOException {
