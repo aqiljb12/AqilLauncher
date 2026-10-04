@@ -201,6 +201,19 @@ final class Hero extends Card {
         restartAuto();
     }
 
+    /** Launcher di latar (apl lain dibuka): jeda Ken Burns & putaran slaid supaya tiada kerja CPU/GPU sia-sia. */
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        if (visibility == VISIBLE) {
+            if (kenBurns != null && kenBurns.isPaused()) kenBurns.resume();
+            restartAuto();
+        } else {
+            if (kenBurns != null && kenBurns.isRunning()) kenBurns.pause();
+            removeCallbacks(auto);
+        }
+    }
+
     @Override
     protected void onDetachedFromWindow() {
         if (kenBurns != null) kenBurns.cancel();

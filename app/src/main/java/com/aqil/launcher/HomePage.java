@@ -94,9 +94,11 @@ final class HomePage extends Page {
         Ui.noClip(recRow);
         int n = 0;
         for (String[] r : Store.recents(a)) {
+            if (r == null || r.length < 2) continue;
             Apps.A app = Apps.find(r[0]);
-            if (app == null) continue;
-            recRow.addView(recentCard(app, Long.parseLong(r[1])), Ui.lin(312, 94, 20));
+            long when = parseTime(r[1]);
+            if (app == null || when <= 0) continue; // abaikan entri rosak, jangan jatuhkan Home
+            recRow.addView(recentCard(app, when), Ui.lin(312, 94, 20));
             if (++n >= 5) break;
         }
         if (n == 0) {
@@ -241,6 +243,14 @@ final class HomePage extends Page {
             }
         });
         return c;
+    }
+
+    private static long parseTime(String s) {
+        try {
+            return s == null ? -1 : Long.parseLong(s.trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     static int darker(int c) {

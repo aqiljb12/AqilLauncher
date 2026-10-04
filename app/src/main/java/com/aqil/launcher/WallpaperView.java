@@ -35,7 +35,10 @@ final class WallpaperView extends FrameLayout {
     private final FrameLayout layer;
     private final List<ObjectAnimator> anims = new ArrayList<>();
     private MediaPlayer mp;
+    private Surface surface;
     private TextureView tex;
+    /** Spec terakhir yang dipohon, untuk dipasang semula jika paparan dilekat semula selepas dilepaskan. */
+    private String lastSpec;
     private String spec = "";
     private boolean paused;
     private int videoW, videoH;
@@ -59,6 +62,7 @@ final class WallpaperView extends FrameLayout {
         if (s == null) s = "aurora";
         if (s.equals(spec)) return;
         spec = s;
+        lastSpec = s;
         clear();
         if (s.equals("aurora")) {
             live(0xFF0B1230, 0xFF1A0F2E, new int[]{0xFF1E6BFF, 0xFF8E3BFF, 0xFFFF3D7F, 0xFF16C2D5});
@@ -80,10 +84,7 @@ final class WallpaperView extends FrameLayout {
     private void clear() {
         for (ObjectAnimator a : anims) a.cancel();
         anims.clear();
-        if (mp != null) {
-            mp.release();
-            mp = null;
-        }
+        releasePlayer();
         tex = null;
         layer.removeAllViews();
         layer.setBackground(null);
@@ -166,15 +167,19 @@ final class WallpaperView extends FrameLayout {
             return;
         }
         tex = new TextureView(getContext());
+        final TextureView myTex = tex;
         tex.setAlpha(0f);
         layer.addView(tex, new LayoutParams(-1, -1));
         tex.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
+                if (tex != myTex) return; // wallpaper sudah ditukar
                 try {
+                    releasePlayer();
                     mp = new MediaPlayer();
                     mp.setDataSource(f.getPath());
-                    mp.setSurface(new Surface(st));
+                    surface = new Surface(st);
+                    mp.setSurface(surface);
                     mp.setLooping(true);
                     mp.setVolume(0f, 0f);
                     mp.setOnVideoSizeChangedListener(new MediaPlayer.OnVideoSizeChangedListener() {
@@ -188,8 +193,25 @@ final class WallpaperView extends FrameLayout {
                     mp.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                         @Override
                         public void onPrepared(MediaPlayer m) {
+                            if (m != mp) return;
                             if (!paused) m.start();
-                            tex.animate().alpha(1f).setDuration(600).start();
+                            myTex.animate().alpha(1f).setDuration(600).start();
+                        }
+                    });
+                    mp.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                        @Override
+                        public boolean onError(MediaPlayer m, int what, int extra) {
+                            // video tak boleh dimainkan (codec dsb.): kembali ke wallpaper live terbina
+                            if (m == mp) post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if ("video".equals(spec)) {
+                                        spec = "";
+                                        apply("aurora");
+                                    }
+                                }
+                            });
+                            return true;
                         }
                     });
                     mp.prepareAsync();
@@ -206,10 +228,7 @@ final class WallpaperView extends FrameLayout {
 
             @Override
             public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
-                if (mp != null) {
-                    mp.release();
-                    mp = null;
-                }
+                if (tex == myTex || tex == null) releasePlayer();
                 return true;
             }
 
@@ -228,7 +247,40 @@ final class WallpaperView extends FrameLayout {
         tex.setTransform(m);
     }
 
+    private void releasePlayer() {
+        if (mp != null) {
+            try {
+                mp.release();
+            } catch (Exception ignored) {
+            }
+            mp = null;
+        }
+        if (surface != null) {
+            surface.release();
+            surface = null;
+        }
+    }
+
     // ---------------------------------------------------------------- kitar hayat
+
+    /**
+     * Animator tanpa had + MediaPlayer mesti dihentikan bila paparan dicabut (cth. aktiviti dimusnahkan),
+     * jika tidak ia terus berjalan dan memegang aktiviti lama (kebocoran memori + CPU di latar).
+     */
+    @Override
+    protected void onDetachedFromWindow() {
+        for (ObjectAnimator x : anims) x.cancel();
+        anims.clear();
+        releasePlayer();
+        spec = ""; // dilekat semula → apply(lastSpec) bina semula
+        super.onDetachedFromWindow();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (spec.isEmpty() && lastSpec != null) apply(lastSpec);
+    }
 
     void pause() {
         paused = true;

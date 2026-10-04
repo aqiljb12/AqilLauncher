@@ -282,7 +282,12 @@ final class Hub {
 
     /** Gambar terbaru dulu. */
     static List<File> images() {
-        File[] fs = imagesDir().listFiles();
+        File[] fs = imagesDir().listFiles(new java.io.FileFilter() {
+            @Override
+            public boolean accept(File f) {
+                return f.isFile() && !f.getName().endsWith(".part"); // muat naik separuh jalan bukan gambar
+            }
+        });
         if (fs == null) return new ArrayList<>();
         List<File> l = new ArrayList<>(Arrays.asList(fs));
         Collections.sort(l, new Comparator<File>() {

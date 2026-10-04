@@ -92,7 +92,10 @@ final class Store {
 
     // ---- baru dibuka ----
 
+    private static final java.util.regex.Pattern PKG = java.util.regex.Pattern.compile("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+");
+
     static void recordLaunch(Context c, String pkg) {
+        if (pkg == null || !PKG.matcher(pkg).matches()) return;
         List<String[]> r = recents(c);
         StringBuilder sb = new StringBuilder(pkg).append('|').append(System.currentTimeMillis()).append('\n');
         int n = 1;
@@ -104,12 +107,28 @@ final class Store {
         p(c).edit().putString("recents", sb.toString()).apply();
     }
 
-    /** [pkg, masa] terbaru dulu. */
+    /**
+     * [pkg, masa] terbaru dulu. Baris rosak/lama (pakej tak sah, masa bukan nombor atau ≤ 0) diabaikan,
+     * jadi data SharedPreferences yang rosak tidak boleh menjatuhkan skrin Home.
+     */
     static List<String[]> recents(Context c) {
         List<String[]> out = new ArrayList<>();
-        for (String line : p(c).getString("recents", "").split("\n")) {
-            String[] kv = line.split("\\|");
-            if (kv.length == 2) out.add(kv);
+        String raw;
+        try {
+            raw = p(c).getString("recents", "");
+        } catch (ClassCastException e) {
+            raw = ""; // jenis data lama/berbeza
+        }
+        if (raw == null) return out;
+        for (String line : raw.split("\n")) {
+            String[] kv = line.trim().split("\\|");
+            if (kv.length != 2 || !PKG.matcher(kv[0]).matches()) continue;
+            try {
+                if (Long.parseLong(kv[1].trim()) <= 0) continue;
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            out.add(new String[]{kv[0], kv[1].trim()});
         }
         return out;
     }

@@ -3,6 +3,8 @@ package com.aqil.launcher;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.SurfaceView;
@@ -34,6 +36,21 @@ import java.util.List;
  */
 @OptIn(markerClass = UnstableApi.class)
 public class LiveTvActivity extends BaseActivity {
+    /** Had langkau automatik berturut-turut (saluran gagal satu demi satu). */
+    private static final int MAX_AUTO_SKIPS = 15;
+    /** Cuba semula saluran yang sama sebelum dianggap gagal. */
+    private static final int MAX_RETRIES = 2;
+    /** Had "sambung semula ke hujung siaran" (BEHIND_LIVE_WINDOW / tersekat) bagi setiap saluran. */
+    private static final int MAX_RESYNCS = 3;
+    /** Main lancar selama ini (ms) baru saluran dikira "benar-benar berjaya" dan pembilang direset. */
+    private static final long STABLE_MS = 5000;
+
+    /** Semua panggilan tertangguh (zap, cuba semula, langkau, nombor, watchdog) melalui satu Handler supaya mudah dibatalkan. */
+    private final Handler h = new Handler(Looper.getMainLooper());
+    /** true hanya antara onStart() dan onStop(): tiada tindakan main balik semasa apl lain di depan. */
+    private boolean started;
+    /** Saluran dipilih sebelum senarai siap / semasa aktiviti terhenti: mainkan bila onStart(). */
+    private boolean needInitial;
     private ExoPlayer player;
     private SurfaceView surface;
     private FrameLayout videoBox, panel, info;
@@ -42,7 +59,7 @@ public class LiveTvActivity extends BaseActivity {
     private ImageView infoLogo;
     private ProgressBar spinner;
     private ChAdapter adapter;
-    private int index = -1, pending = -1, retries, skips, lastStep = 1;
+    private int index = -1, pending = -1, retries, skips, resyncs, lastStep = 1;
     private boolean triedHls;
     private long bufferingSince;
     private String digitBuf = "";
@@ -56,7 +73,7 @@ public class LiveTvActivity extends BaseActivity {
     private final Runnable zap = new Runnable() {
         @Override
         public void run() {
-            if (pending >= 0) start(pending);
+            if (started && pending >= 0) start(pending);
         }
     };
     private final Runnable digitGo = new Runnable() {
@@ -65,20 +82,57 @@ public class LiveTvActivity extends BaseActivity {
             int n = digitBuf.isEmpty() ? 0 : Integer.parseInt(digitBuf);
             digitBuf = "";
             digits.setVisibility(View.GONE);
-            if (n >= 1 && n <= Hub.channels.size()) select(n - 1, 0);
+            if (started && n >= 1 && n <= Hub.channels.size()) select(n - 1, 0, false);
+        }
+    };
+    /** Dipanggil STABLE_MS selepas READY: jika masih main, saluran ini benar-benar berjaya. */
+    private final Runnable stable = new Runnable() {
+        @Override
+        public void run() {
+            if (started && player != null && player.getPlaybackState() == Player.STATE_READY) {
+                skips = 0;
+                retries = 0;
+                resyncs = 0;
+            }
+        }
+    };
+    private Channel epgFor;
+    private final Runnable epgFetch = new Runnable() {
+        @Override
+        public void run() {
+            final Channel ch = epgFor;
+            if (!started || ch == null) return;
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    final String s = Xtream.nowNext(LiveTvActivity.this, ch);
+                    if (s != null) runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!isDestroyed() && epgFor == ch) infoGroup.setText(s);
+                        }
+                    });
+                }
+            }, "epg").start();
         }
     };
     private final Runnable watchdog = new Runnable() {
         @Override
         public void run() {
-            if (player != null && player.getPlaybackState() == Player.STATE_BUFFERING && bufferingSince > 0
+            if (!started || player == null) return; // jangan sentuh main balik bila apl lain di depan
+            if (player.getPlaybackState() == Player.STATE_BUFFERING && bufferingSince > 0
                     && System.currentTimeMillis() - bufferingSince > 15000) {
-                // tersekat terlalu lama: sambung semula ke hujung siaran langsung
                 bufferingSince = System.currentTimeMillis();
-                player.seekToDefaultPosition();
-                player.prepare();
+                if (resyncs < MAX_RESYNCS) {
+                    // tersekat terlalu lama: sambung semula ke hujung siaran langsung (terhad)
+                    resyncs++;
+                    player.seekToDefaultPosition();
+                    player.prepare();
+                } else {
+                    status.setText("Siaran tersekat. Tekan atas/bawah untuk saluran lain.");
+                }
             }
-            status.postDelayed(this, 3000);
+            h.postDelayed(this, 3000);
         }
     };
 
@@ -151,7 +205,7 @@ public class LiveTvActivity extends BaseActivity {
             @Override
             public void onItemClick(AdapterView<?> p, View v, int pos, long id) {
                 hidePanel();
-                select(pos, 0);
+                select(pos, 0, false);
             }
         });
         panel.addView(list, Ui.at(40, 120, 640, 920));
@@ -163,7 +217,7 @@ public class LiveTvActivity extends BaseActivity {
         Hub.loadChannels(false, new Hub.Done() {
             @Override
             public void run(int count, String error) {
-                if (isFinishing()) return;
+                if (isFinishing() || isDestroyed()) return;
                 adapter.notifyDataSetChanged();
                 if (count == 0) {
                     spinner.setVisibility(View.GONE);
@@ -171,7 +225,8 @@ public class LiveTvActivity extends BaseActivity {
                             + "\nTetapkan URL senarai M3U dari telefon (Remote › Lagi).");
                     return;
                 }
-                handle(getIntent(), true);
+                if (started) handle(getIntent(), true);
+                else needInitial = true;
             }
         });
     }
@@ -191,9 +246,13 @@ public class LiveTvActivity extends BaseActivity {
                 }
                 if (state == Player.STATE_READY) {
                     status.setText("");
-                    retries = 0;
-                    skips = 0;
                     if (index >= 0 && index < Hub.channels.size()) Hub.channels.get(index).alive = true;
+                    // Pembilang gagal direset hanya selepas saluran main lancar STABLE_MS, supaya siaran yang
+                    // "READY sekejap lalu mati" tidak boleh menyebabkan kitaran langkau/cuba semula tanpa henti.
+                    h.removeCallbacks(stable);
+                    h.postDelayed(stable, STABLE_MS);
+                } else {
+                    h.removeCallbacks(stable);
                 }
             }
 
@@ -207,7 +266,6 @@ public class LiveTvActivity extends BaseActivity {
                 onError(e);
             }
         });
-        status.postDelayed(watchdog, 3000);
     }
 
     @Override
@@ -221,18 +279,30 @@ public class LiveTvActivity extends BaseActivity {
         if (chs.isEmpty()) return;
         int idx = i.getIntExtra("index", -1);
         if (idx < 0 && (first || index < 0)) idx = Math.min(Store.lastChannel(this), chs.size() - 1);
-        if (idx >= 0) select(Math.min(idx, chs.size() - 1), 0);
+        if (idx < 0) return;
+        idx = Math.min(idx, chs.size() - 1);
+        if (!started) {
+            // onNewIntent datang sebelum onStart(): simpan sahaja, onStart() akan mainkan
+            pending = idx;
+            skips = 0;
+            return;
+        }
+        select(idx, 0, false);
     }
 
-    /** Pilih saluran: papar maklumat serta-merta, mula main selepas 350ms (zapping laju tanpa sangkut). */
-    private void select(int i, int delayMs) {
+    /**
+     * Pilih saluran: papar maklumat serta-merta, mula main selepas delayMs (zapping laju tanpa sangkut).
+     * auto=false (pilihan pengguna) mereset had langkau automatik; auto=true tidak.
+     */
+    private void select(int i, int delayMs, boolean auto) {
         List<Channel> chs = Hub.channels;
         if (i < 0 || i >= chs.size()) return;
+        if (!auto) skips = 0;
         pending = i;
         showInfo(i);
-        status.removeCallbacks(zap);
+        h.removeCallbacks(zap);
         if (delayMs <= 0) start(i);
-        else status.postDelayed(zap, delayMs);
+        else h.postDelayed(zap, delayMs);
     }
 
     private void showInfo(int i) {
@@ -240,35 +310,26 @@ public class LiveTvActivity extends BaseActivity {
         infoNum.setText(String.valueOf(i + 1));
         infoName.setText(c.name);
         infoGroup.setText(c.group);
-        if (c.xtId != 0) {
-            final Channel ch = c;
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    final String s = Xtream.nowNext(LiveTvActivity.this, ch);
-                    if (s != null) runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (index >= 0 && index < Hub.channels.size() && (Hub.channels.get(index) == ch || pending >= 0 && Hub.channels.get(pending) == ch))
-                                infoGroup.setText(s);
-                        }
-                    });
-                }
-            }).start();
-        }
+        // EPG diambil hanya bila pilihan berhenti 700ms (zap laju tidak mencipta banyak thread rangkaian)
+        h.removeCallbacks(epgFetch);
+        epgFor = c; // hasil EPG lama untuk saluran lain akan diabaikan
+        if (c.xtId != 0) h.postDelayed(epgFetch, 700);
         Img.load(infoLogo, c.logo, S.px(170));
         info.animate().cancel();
         info.setAlpha(1f);
         info.setTranslationY(0);
-        info.removeCallbacks(hideInfo);
-        info.postDelayed(hideInfo, 4500);
+        h.removeCallbacks(hideInfo);
+        h.postDelayed(hideInfo, 4500);
     }
 
     private void start(int i) {
+        if (i < 0 || i >= Hub.channels.size()) return;
         pending = -1;
         index = i;
-        retries = 0;
+        retries = 0; // cuba semula dikira bagi setiap saluran; "skips" sengaja TIDAK direset di sini
+        resyncs = 0;
         triedHls = false;
+        h.removeCallbacks(stable);
         Hub.playing = i;
         Store.setLastChannel(this, i);
         adapter.notifyDataSetChanged();
@@ -277,6 +338,7 @@ public class LiveTvActivity extends BaseActivity {
     }
 
     private void play(Channel c, String forceMime) {
+        if (!started || player == null) return; // onStart() akan mainkan semula
         try {
             player.setMediaSource(Streams.source(this, c, forceMime));
             player.prepare();
@@ -288,9 +350,13 @@ public class LiveTvActivity extends BaseActivity {
     }
 
     private void onError(PlaybackException e) {
+        if (!started || player == null) return;
         if (index < 0 || index >= Hub.channels.size()) return;
-        Channel c = Hub.channels.get(index);
-        if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+        final Channel c = Hub.channels.get(index);
+        final int failed = index;
+        h.removeCallbacks(stable);
+        if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && resyncs < MAX_RESYNCS) {
+            resyncs++;
             player.seekToDefaultPosition();
             player.prepare();
             return;
@@ -301,30 +367,35 @@ public class LiveTvActivity extends BaseActivity {
             play(c, MimeTypes.APPLICATION_M3U8);
             return;
         }
-        if (retries < 2) {
+        if (retries < MAX_RETRIES) {
             retries++;
             status.setText("Menyambung semula… (" + retries + ")");
-            status.postDelayed(new Runnable() {
+            h.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    if (index >= 0 && pending < 0) play(Hub.channels.get(index), triedHls ? MimeTypes.APPLICATION_M3U8 : null);
+                    // hanya jika masih saluran yang sama & tiada pilihan baharu menunggu
+                    if (started && pending < 0 && index == failed && failed < Hub.channels.size())
+                        play(Hub.channels.get(failed), triedHls ? MimeTypes.APPLICATION_M3U8 : null);
                 }
             }, 1200L * retries);
             return;
         }
         c.alive = false;
         spinner.setVisibility(View.GONE);
-        if (Store.autoSkip(this) && skips < 15 && Hub.channels.size() > 1) {
+        if (!Store.autoSkip(this) || Hub.channels.size() <= 1) {
+            status.setText(c.name + " tidak dapat dimainkan.\n(" + e.getErrorCodeName() + ")\nTekan atas/bawah untuk saluran lain.");
+        } else if (skips >= MAX_AUTO_SKIPS) {
+            status.setText(MAX_AUTO_SKIPS + " saluran berturut-turut gagal – langkau automatik dihentikan.\n"
+                    + "Semak sambungan Internet / akaun IPTV, atau tekan atas/bawah untuk pilih saluran.");
+        } else {
             skips++;
-            status.setText(c.name + " tidak tersedia sekarang.\nKe saluran seterusnya…");
-            status.postDelayed(new Runnable() {
+            status.setText(c.name + " tidak tersedia sekarang.\nKe saluran seterusnya… (" + skips + "/" + MAX_AUTO_SKIPS + ")");
+            h.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    step(lastStep);
+                    if (started && pending < 0 && index == failed) step(lastStep, true);
                 }
             }, 1500);
-        } else {
-            status.setText(c.name + " tidak dapat dimainkan.\n(" + e.getErrorCodeName() + ")\nTekan atas/bawah untuk saluran lain.");
         }
     }
 
@@ -341,12 +412,12 @@ public class LiveTvActivity extends BaseActivity {
         surface.setLayoutParams(lp);
     }
 
-    private void step(int delta) {
+    private void step(int delta, boolean auto) {
         int n = Hub.channels.size();
         if (n == 0) return;
         lastStep = delta;
         int base = pending >= 0 ? pending : Math.max(index, 0);
-        select((base + delta + n) % n, 350);
+        select((base + delta + n) % n, 350, auto);
     }
 
     private void showPanel() {
@@ -377,17 +448,17 @@ public class LiveTvActivity extends BaseActivity {
                 if (digitBuf.length() > 4) digitBuf = digitBuf.substring(1);
                 digits.setText(digitBuf);
                 digits.setVisibility(View.VISIBLE);
-                digits.removeCallbacks(digitGo);
-                digits.postDelayed(digitGo, 1500);
+                h.removeCallbacks(digitGo);
+                h.postDelayed(digitGo, 1500);
                 return true;
             }
             if (!panelOpen) {
                 if (k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_CHANNEL_UP) {
-                    step(1);
+                    step(1, false);
                     return true;
                 }
                 if (k == KeyEvent.KEYCODE_DPAD_DOWN || k == KeyEvent.KEYCODE_CHANNEL_DOWN) {
-                    step(-1);
+                    step(-1, false);
                     return true;
                 }
                 if (k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER || k == KeyEvent.KEYCODE_MENU
@@ -409,26 +480,47 @@ public class LiveTvActivity extends BaseActivity {
     }
 
     @Override
-    protected void onStop() {
-        super.onStop();
-        if (player != null) player.pause();
-    }
-
-    @Override
     protected void onStart() {
         super.onStart();
-        if (player != null && index >= 0) {
-            player.seekToDefaultPosition();
-            player.prepare();
-            player.play();
+        started = true;
+        h.removeCallbacks(watchdog); // elak watchdog berganda selepas jeda/sambung berulang
+        h.postDelayed(watchdog, 3000);
+        h.postDelayed(hideInfo, 4500);
+        if (player == null) return;
+        if (needInitial) {
+            needInitial = false;
+            handle(getIntent(), true);
+        } else if (pending >= 0 && pending < Hub.channels.size()) {
+            int p = pending;
+            select(p, 0, false);
+        } else if (index >= 0 && index < Hub.channels.size()) {
+            retries = 0;
+            resyncs = 0;
+            play(Hub.channels.get(index), triedHls ? MimeTypes.APPLICATION_M3U8 : null);
         }
     }
 
     @Override
+    protected void onStop() {
+        started = false;
+        // Batal SEMUA panggilan tertangguh (watchdog, zap, cuba semula, langkau, nombor, sembunyi info)
+        h.removeCallbacksAndMessages(null);
+        digitBuf = "";
+        digits.setVisibility(View.GONE);
+        // stop() (bukan pause) supaya sambungan rangkaian/akaun IPTV dilepaskan semasa apl lain dibuka
+        if (player != null) player.stop();
+        bufferingSince = 0;
+        super.onStop();
+    }
+
+    @Override
     protected void onDestroy() {
-        status.removeCallbacks(watchdog);
-        status.removeCallbacks(zap);
-        if (player != null) player.release();
+        started = false;
+        h.removeCallbacksAndMessages(null);
+        if (player != null) {
+            player.release();
+            player = null;
+        }
         Hub.playing = -1;
         super.onDestroy();
     }

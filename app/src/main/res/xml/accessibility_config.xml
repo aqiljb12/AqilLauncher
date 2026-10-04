@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Acara fokus hanya untuk MENGINGATI paparan yang difokus; servis tidak bertindak sendiri dan tidak
+     menapis kekunci fizikal (tiada flagRequestFilterKeyEvents). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeViewFocused|typeViewAccessibilityFocused"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds|flagIncludeNotImportantViews"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:description="@string/a11y_desc"
-    android:notificationTimeout="200" />
+    android:notificationTimeout="100" />

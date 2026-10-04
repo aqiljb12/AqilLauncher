@@ -34,8 +34,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -49,8 +52,15 @@ final class RemoteServer {
     private static final int MAX_JSON = 1024 * 1024;
     private static final long MAX_UPLOAD = 300L * 1024 * 1024;
 
+    /** Pekerja maksimum (TV memori rendah) dan baris gilir terhad – sambungan berlebihan ditolak, bukan ditimbun. */
+    private static final int WORKERS = 10, QUEUE = 16;
+    /** Had WebSocket serentak supaya sentiasa ada pekerja untuk permintaan HTTP biasa. */
+    private static final int MAX_WS = 4;
+
     private final Context ctx;
-    private final ExecutorService pool = Executors.newCachedThreadPool();
+    private final ThreadPoolExecutor pool;
+    private final Set<Socket> open = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<Socket, Boolean>());
+    private final AtomicInteger wsCount = new AtomicInteger();
     private volatile ServerSocket server;
     private volatile boolean running;
     private final Map<String, long[]> fails = new HashMap<>();
@@ -58,11 +68,36 @@ final class RemoteServer {
 
     RemoteServer(Context c) {
         ctx = c;
+        pool = new ThreadPoolExecutor(WORKERS, WORKERS, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(QUEUE),
+                new ThreadFactory() {
+                    private final AtomicInteger n = new AtomicInteger();
+
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, "remote-" + n.incrementAndGet());
+                        t.setDaemon(true);
+                        return t;
+                    }
+                }, new ThreadPoolExecutor.AbortPolicy());
+        pool.allowCoreThreadTimeOut(true); // tiada thread terbiar bila tiada telefon bersambung
+    }
+
+    /** Buang fail muat naik separuh jalan (.part) yang tertinggal dari sesi sebelum ini. */
+    private void cleanStaleParts() {
+        for (File dir : new File[]{ctx.getFilesDir(), Hub.imagesDir()}) {
+            File[] fs = dir.listFiles();
+            if (fs == null) continue;
+            for (File f : fs) if (f.getName().endsWith(".part")) f.delete();
+        }
     }
 
     void start() {
         running = true;
         new Thread(() -> {
+            try {
+                cleanStaleParts();
+            } catch (Exception ignored) {
+            }
             while (running && server == null) {
                 for (int p : PORTS) {
                     try {
@@ -84,24 +119,40 @@ final class RemoteServer {
                 }
             }
             while (running) {
+                Socket s = null;
                 try {
-                    final Socket s = server.accept();
+                    s = server.accept();
                     s.setTcpNoDelay(true);
-                    pool.execute(() -> serve(s));
+                    final Socket fs = s;
+                    pool.execute(() -> serve(fs)); // tidak menyekat: penuh → RejectedExecutionException
+                } catch (RejectedExecutionException e) {
+                    closeQuietly(s); // terlalu banyak sambungan serentak: tolak yang ini
                 } catch (IOException e) {
+                    closeQuietly(s);
                     if (!running) break;
                 }
             }
         }, "remote-accept").start();
     }
 
+    /** Tutup soket pelayan, semua sambungan terbuka (termasuk WebSocket) dan pekerja. */
     void stop() {
         running = false;
         try {
             if (server != null) server.close();
         } catch (IOException ignored) {
         }
+        for (Socket s : open) closeQuietly(s);
+        open.clear();
         pool.shutdownNow();
+    }
+
+    private static void closeQuietly(Socket s) {
+        if (s == null) return;
+        try {
+            s.close();
+        } catch (IOException ignored) {
+        }
     }
 
     // ------------------------------------------------------------------ HTTP
@@ -126,6 +177,7 @@ final class RemoteServer {
 
         byte[] body() throws IOException {
             if (body == null) {
+                if (len < 0) throw new IOException("Content-Length tak sah");
                 if (len > MAX_JSON) throw new IOException("terlalu besar");
                 body = new byte[(int) Math.max(0, len)];
                 int off = 0;
@@ -146,22 +198,36 @@ final class RemoteServer {
             }
         }
 
-        /** Salin badan permintaan terus ke fail (untuk gambar/video besar, tanpa guna memori). */
+        /**
+         * Salin badan permintaan terus ke fail secara berperingkat (tidak dimuat ke RAM).
+         * Ditulis ke &lt;fail&gt;.part dulu; destinasi hanya diganti bila SEMUA bait diterima.
+         * Fail .part sentiasa dipadam jika gagal/terputus.
+         */
         void saveTo(File f) throws IOException {
+            if (len <= 0) throw new IOException("Content-Length tak sah");
             if (len > MAX_UPLOAD) throw new IOException("Fail terlalu besar (maks 300MB)");
             File tmp = new File(f.getPath() + ".part");
-            try (OutputStream out = new FileOutputStream(tmp)) {
-                byte[] buf = new byte[64 * 1024];
-                long left = len;
-                while (left > 0) {
-                    int k = in.read(buf, 0, (int) Math.min(buf.length, left));
-                    if (k < 0) throw new IOException("putus");
-                    out.write(buf, 0, k);
-                    left -= k;
+            boolean ok = false;
+            try {
+                try (OutputStream out = new FileOutputStream(tmp)) {
+                    byte[] buf = new byte[64 * 1024];
+                    long left = len;
+                    while (left > 0) {
+                        int k = in.read(buf, 0, (int) Math.min(buf.length, left));
+                        if (k < 0) throw new IOException("Muat naik terputus");
+                        out.write(buf, 0, k);
+                        left -= k;
+                    }
+                    out.flush();
                 }
+                if (!tmp.renameTo(f)) { // renameTo menimpa pada Android; cuba sekali lagi selepas padam
+                    f.delete();
+                    if (!tmp.renameTo(f)) throw new IOException("Gagal simpan fail");
+                }
+                ok = true;
+            } finally {
+                if (!ok) tmp.delete();
             }
-            if (f.exists()) f.delete();
-            if (!tmp.renameTo(f)) throw new IOException("gagal simpan");
         }
     }
 
@@ -214,13 +280,24 @@ final class RemoteServer {
     }
 
     private void serve(Socket s) {
+        open.add(s);
         try {
             s.setSoTimeout(30000);
             InputStream in = new BufferedInputStream(s.getInputStream());
             Req r = readHead(in);
+            if (r == null) return; // sambungan kosong / ditutup awal
             r.ip = s.getInetAddress().getHostAddress();
             if ("websocket".equalsIgnoreCase(r.h.get("upgrade")) && r.path.equals("/ws")) {
-                websocket(s, in, r);
+                if (wsCount.incrementAndGet() > MAX_WS) {
+                    wsCount.decrementAndGet();
+                    write(s.getOutputStream(), Res.error(503, "Terlalu banyak sambungan remote"));
+                    return;
+                }
+                try {
+                    websocket(s, in, r);
+                } finally {
+                    wsCount.decrementAndGet();
+                }
                 return;
             }
             Res res;
@@ -232,10 +309,8 @@ final class RemoteServer {
             write(s.getOutputStream(), res);
         } catch (Exception ignored) {
         } finally {
-            try {
-                s.close();
-            } catch (IOException ignored) {
-            }
+            open.remove(s);
+            closeQuietly(s);
         }
     }
 
@@ -250,6 +325,7 @@ final class RemoteServer {
             c = d;
             if (head.size() > 32768) throw new IOException("header terlalu besar");
         }
+        if (head.size() == 0) return null;
         String[] lines = head.toString("UTF-8").split("\r\n");
         String[] first = lines[0].split(" ");
         Req r = new Req();
@@ -269,7 +345,15 @@ final class RemoteServer {
             if (ci > 0) r.h.put(lines[i].substring(0, ci).trim().toLowerCase(Locale.ROOT), lines[i].substring(ci + 1).trim());
         }
         String cl = r.h.get("content-length");
-        r.len = cl == null ? 0 : Long.parseLong(cl.trim());
+        if (cl == null) r.len = 0;
+        else {
+            try {
+                r.len = Long.parseLong(cl.trim());
+                if (r.len < 0) r.len = -1;
+            } catch (NumberFormatException e) {
+                r.len = -1; // tak sah: body()/saveTo() akan menolak
+            }
+        }
         return r;
     }
 

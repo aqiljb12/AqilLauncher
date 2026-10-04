@@ -29,6 +29,8 @@ public class ImageViewerActivity extends BaseActivity {
     private int index = -1;
     private int gen;
     private boolean slideshow;
+    /** true antara onStart() dan onStop(). */
+    private boolean visible;
     private float d;
     private final Runnable next = new Runnable() {
         @Override
@@ -104,7 +106,7 @@ public class ImageViewerActivity extends BaseActivity {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        if (g == gen && bm != null) swap(bm, idx, dir);
+                        if (g == gen && bm != null && !isDestroyed()) swap(bm, idx, dir);
                     }
                 });
             }
@@ -147,7 +149,7 @@ public class ImageViewerActivity extends BaseActivity {
         caption.setAlpha(1f);
         caption.animate().alpha(0f).setStartDelay(2500).setDuration(600).start();
         caption.removeCallbacks(next);
-        if (slideshow) caption.postDelayed(next, 7000);
+        if (slideshow && visible) caption.postDelayed(next, 7000);
     }
 
     @Override
@@ -200,6 +202,23 @@ public class ImageViewerActivity extends BaseActivity {
                     }
                 })
                 .show();
+    }
+
+    @Override
+    protected void onStop() {
+        visible = false;
+        caption.removeCallbacks(next); // jangan nyahkod gambar di latar semasa apl lain dibuka
+        super.onStop();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        visible = true;
+        if (slideshow && index >= 0) {
+            caption.removeCallbacks(next);
+            caption.postDelayed(next, 7000);
+        }
     }
 
     @Override

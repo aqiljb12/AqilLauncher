@@ -298,7 +298,6 @@ final class LivePage extends Page {
                 focused = index;
                 pName.setText((index + 1) + "  " + ch.name);
                 pGroup.setText(ch.group.isEmpty() ? "Siaran langsung" : ch.group);
-                if (ch.xtId != 0) epg(ch);
                 Img.load(pLogo, ch.logo, S.px(280));
                 root.removeCallbacks(startPreview);
                 if (previewing != index) {
@@ -363,6 +362,8 @@ final class LivePage extends Page {
             });
         }
         previewing = index;
+        Channel pc = Hub.channels.get(index);
+        if (pc.xtId != 0) epg(pc); // EPG hanya bila fokus berhenti (bukan setiap kali fokus bergerak)
         tex.setAlpha(0f);
         try {
             preview.setMediaSource(Streams.source(a, Hub.channels.get(index), null));
