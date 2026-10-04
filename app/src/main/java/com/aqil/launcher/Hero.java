@@ -33,6 +33,7 @@ final class Hero extends Card {
     private final ImageView badgeIcon;
     private final LinearLayout badge, dots, btn;
     private int idx;
+    private android.animation.ObjectAnimator kenBurns;
     private final Runnable auto = new Runnable() {
         @Override
         public void run() {
@@ -51,9 +52,21 @@ final class Hero extends Card {
         bg = new ImageView(c);
         bg.setScaleType(ImageView.ScaleType.CENTER_CROP);
         stage.addView(bg, new LayoutParams(-1, -1));
+        // Ken Burns: latar banner zum & gerak perlahan tanpa henti (animasi GPU)
+        if (Store.fx(c)) {
+            android.animation.ObjectAnimator kb = android.animation.ObjectAnimator.ofPropertyValuesHolder(bg,
+                    android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.14f),
+                    android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.14f),
+                    android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_X, 0f, -S.px(30)));
+            kb.setDuration(14000);
+            kb.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            kb.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+            kb.start();
+            kenBurns = kb;
+        }
         logo = new ImageView(c);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        stage.addView(logo, Ui.at(600, 70, 340, 240));
+        stage.addView(logo, Ui.at(610, 60, 330, 230));
         View shade = new View(c);
         shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{0xE6000000, 0x80000000, 0x00000000}));
         stage.addView(shade, new LayoutParams(-1, -1));
@@ -75,7 +88,7 @@ final class Hero extends Card {
 
         title = Ui.text(c, "", 72, Ui.WHITE, Ui.BOLD);
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
-        tlp.topMargin = S.px(46);
+        tlp.topMargin = S.px(36);
         col.addView(title, tlp);
         sub = Ui.text(c, "", 30, 0xE6FFFFFF, Ui.MEDIUM);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
@@ -92,12 +105,12 @@ final class Hero extends Card {
         btp.leftMargin = S.px(14);
         btn.addView(btnText, btp);
         LinearLayout.LayoutParams bnp = new LinearLayout.LayoutParams(-2, -2);
-        bnp.topMargin = S.px(34);
+        bnp.topMargin = S.px(28);
         col.addView(btn, bnp);
 
         dots = new LinearLayout(c);
         dots.setGravity(Gravity.CENTER);
-        addView(dots, Ui.at(0, 336, -1, 12));
+        addView(dots, Ui.at(0, 322, -1, 12));
 
         setOnClickListener(new OnClickListener() {
             @Override
@@ -190,6 +203,7 @@ final class Hero extends Card {
 
     @Override
     protected void onDetachedFromWindow() {
+        if (kenBurns != null) kenBurns.cancel();
         removeCallbacks(auto);
         super.onDetachedFromWindow();
     }

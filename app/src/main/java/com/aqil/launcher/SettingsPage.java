@@ -34,7 +34,7 @@ final class SettingsPage extends Page {
         LinearLayout col = new LinearLayout(a);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(S.px(14), S.px(16), S.px(14), S.px(80));
-        Ui.noClip(sv, col);
+        Ui.noClip(col);
         sv.addView(col);
 
         col.addView(section("Wallpaper"));
@@ -42,7 +42,7 @@ final class SettingsPage extends Page {
         hs.setHorizontalScrollBarEnabled(false);
         LinearLayout walls = new LinearLayout(a);
         walls.setPadding(S.px(6), S.px(16), S.px(30), S.px(20));
-        Ui.noClip(hs, walls);
+        Ui.noClip(walls);
         hs.addView(walls);
         String cur = Store.wallpaper(a);
         firstView = null;
@@ -134,7 +134,7 @@ final class SettingsPage extends Page {
         TextView v = Ui.text(a, "Aqil Launcher " + version(), 22, Ui.FAINT, Ui.MEDIUM);
         v.setPadding(S.px(8), S.px(30), 0, 0);
         col.addView(v);
-        root.addView(sv, Ui.at(0, 70, 1660, 710));
+        root.addView(sv, Ui.at(-14, 70, 1680, 794));
     }
 
     private String version() {

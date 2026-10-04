@@ -31,16 +31,16 @@ final class HomePage extends Page {
 
         hero = new Hero(a);
         hero.setSlides(slides());
-        root.addView(hero, Ui.at(0, 0, 1000, 380));
+        root.addView(hero, Ui.at(0, 0, 1000, 360));
         firstView = hero;
 
         // dua kad apl di kanan banner
         List<Apps.A> favs = Apps.favorites(a);
         for (int i = 0; i < 2 && i < favs.size(); i++) {
-            root.addView(sideCard(favs.get(i)), Ui.at(1026 + i * 320, 160, 300, 220));
+            root.addView(sideCard(favs.get(i)), Ui.at(1026 + i * 320, 150, 300, 210));
         }
 
-        root.addView(Ui.text(a, "Aplikasi Kegemaran", 32, Ui.WHITE, Ui.MEDIUM), Ui.at(6, 406, -2, -2));
+        root.addView(Ui.text(a, "Aplikasi Kegemaran", 30, Ui.WHITE, Ui.MEDIUM), Ui.at(6, 384, -2, -2));
         LinearLayout favRow = new LinearLayout(a);
         Ui.noClip(favRow);
         int shown = 0;
@@ -66,24 +66,45 @@ final class HomePage extends Page {
             }
         });
         favRow.addView(add, Ui.lin(214, 120, 0));
-        root.addView(favRow, Ui.at(0, 452, -2, 120));
+        root.addView(favRow, Ui.at(0, 424, -2, 120));
 
-        root.addView(Ui.text(a, "Dibuka Baru-baru Ini", 32, Ui.WHITE, Ui.MEDIUM), Ui.at(6, 604, -2, -2));
+        // ---- siaran langsung (logo saluran, terus tonton)
+        root.addView(Ui.text(a, "Siaran Langsung", 30, Ui.WHITE, Ui.MEDIUM), Ui.at(6, 566, -2, -2));
+        LinearLayout liveRow = new LinearLayout(a);
+        Ui.noClip(liveRow);
+        List<Channel> chs = Hub.channels;
+        int start = Math.max(0, Math.min(Store.lastChannel(a), chs.size() - 1));
+        int shownCh = 0;
+        for (int k = 0; k < chs.size() && shownCh < 8; k++) {
+            int ci = (start + k) % chs.size();
+            Channel ch = chs.get(ci);
+            if (Boolean.FALSE.equals(ch.alive)) continue;
+            liveRow.addView(channelCard(ci, ch), Ui.lin(180, 96, 18));
+            shownCh++;
+        }
+        if (shownCh == 0) {
+            TextView hint = Ui.text(a, "Memuatkan saluran…", 24, Ui.FAINT, Ui.MEDIUM);
+            hint.setGravity(Gravity.CENTER_VERTICAL);
+            liveRow.addView(hint, new LinearLayout.LayoutParams(-2, S.px(96)));
+        }
+        root.addView(liveRow, Ui.at(0, 604, -2, 96));
+
+        root.addView(Ui.text(a, "Dibuka Baru-baru Ini", 30, Ui.WHITE, Ui.MEDIUM), Ui.at(6, 722, -2, -2));
         LinearLayout recRow = new LinearLayout(a);
         Ui.noClip(recRow);
         int n = 0;
         for (String[] r : Store.recents(a)) {
             Apps.A app = Apps.find(r[0]);
             if (app == null) continue;
-            recRow.addView(recentCard(app, Long.parseLong(r[1])), Ui.lin(312, 112, 20));
+            recRow.addView(recentCard(app, Long.parseLong(r[1])), Ui.lin(312, 94, 20));
             if (++n >= 5) break;
         }
         if (n == 0) {
             TextView hint = Ui.text(a, "Apl yang anda buka akan muncul di sini.", 24, Ui.FAINT, Ui.MEDIUM);
-            recRow.addView(hint, new LinearLayout.LayoutParams(-2, S.px(112)));
+            recRow.addView(hint, new LinearLayout.LayoutParams(-2, S.px(94)));
             hint.setGravity(Gravity.CENTER_VERTICAL);
         }
-        root.addView(recRow, Ui.at(0, 650, -2, 112));
+        root.addView(recRow, Ui.at(0, 760, -2, 94));
     }
 
     private List<Hero.Slide> slides() {
@@ -195,10 +216,30 @@ final class HomePage extends Page {
     private Card recentCard(Apps.A app, long t) {
         Card c = new Card(a, 22);
         ImageView ic = Ui.image(a, app.icon);
-        c.addView(ic, Ui.at(18, 18, 76, 76));
-        c.addView(Ui.text(a, app.label, 28, Ui.WHITE, Ui.MEDIUM), Ui.at(112, 26, 186, -2));
-        c.addView(Ui.text(a, Ui.ago(t), 22, Ui.DIM, Ui.MEDIUM), Ui.at(112, 66, 190, -2));
+        c.addView(ic, Ui.at(16, 14, 66, 66));
+        c.addView(Ui.text(a, app.label, 27, Ui.WHITE, Ui.MEDIUM), Ui.at(98, 18, 200, -2));
+        c.addView(Ui.text(a, Ui.ago(t), 21, Ui.DIM, Ui.MEDIUM), Ui.at(98, 56, 200, -2));
         a.bindApp(c, app);
+        return c;
+    }
+
+    private Card channelCard(final int index, Channel ch) {
+        Card c = new Card(a, 20);
+        c.ambient = 0xFF3A1C7A;
+        c.scaleTo = 1.1f;
+        ImageView logo = new ImageView(a);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        Img.load(logo, ch.logo, S.px(160));
+        c.addView(logo, Ui.at(18, 10, 144, 54));
+        TextView n = Ui.text(a, ch.name, 18, Ui.DIM, Ui.MEDIUM);
+        n.setGravity(Gravity.CENTER);
+        c.addView(n, Ui.at(6, 68, 168, -2));
+        c.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                a.openLive(index);
+            }
+        });
         return c;
     }
 

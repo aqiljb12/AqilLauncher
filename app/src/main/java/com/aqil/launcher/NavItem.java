@@ -33,7 +33,7 @@ final class NavItem extends Card {
     }
 
     void setActive(boolean on) {
-        setBackground(on ? Ui.selected(S.px(radius)) : Ui.solid(0x00000000, S.px(radius)));
         label.setTextColor(on ? Ui.WHITE : Ui.DIM);
+        icon.setAlpha(on ? 1f : 0.75f);
     }
 }

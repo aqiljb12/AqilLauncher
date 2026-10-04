@@ -28,7 +28,7 @@ final class AppsPage extends Page {
         final LinearLayout col = new LinearLayout(a);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(S.px(14), S.px(24), S.px(14), S.px(60));
-        Ui.noClip(sv, col);
+        Ui.noClip(col);
         sv.addView(col);
         LinearLayout row = null;
         firstView = null;
@@ -64,7 +64,7 @@ final class AppsPage extends Page {
             row.addView(c, Ui.lin(250, 141, 22));
             if (firstView == null) firstView = c;
         }
-        root.addView(sv, Ui.at(0, 96, 1660, 684));
+        root.addView(sv, Ui.at(-14, 96, 1680, 768));
     }
 
     @Override

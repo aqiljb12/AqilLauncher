@@ -202,9 +202,9 @@ final class Hub {
             con.setInstanceFollowRedirects(true);
             con.setRequestProperty("User-Agent", c.ua != null ? c.ua : UA);
             if (c.referer != null) con.setRequestProperty("Referer", c.referer);
-            con.setRequestProperty("Range", "bytes=0-2047");
+            if (c.origin != null) con.setRequestProperty("Origin", c.origin);
             int code = con.getResponseCode();
-            if (code / 100 != 2) return false;
+            if (code < 200 || code >= 400) return false;
             InputStream in = con.getInputStream();
             byte[] b = new byte[512];
             int n = in.read(b);

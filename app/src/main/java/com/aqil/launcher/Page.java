@@ -25,4 +25,8 @@ abstract class Page {
     }
 
     void onHide() {}
+
+    void onPause() {}
+
+    void onResume() {}
 }

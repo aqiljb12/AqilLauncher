@@ -23,6 +23,8 @@ class Card extends FrameLayout {
     private final View ring, shine;
     float scaleTo = 1.07f;
     OnFocus onFocus;
+    /** Warna ambien latar bila kad ini difokus (0 = tiada). */
+    int ambient;
 
     Card(Context c, float radius) {
         this(c, radius, Ui.glass(S.px(radius)));
@@ -67,10 +69,27 @@ class Card extends FrameLayout {
         animateFocus(gained);
         if (onFocus != null) onFocus.onFocus(this, gained);
         if (gained && getContext() instanceof BaseActivity) {
+            if (ambient != 0) ((BaseActivity) getContext()).ambient(ambient);
             int[] l = new int[2];
             getLocationOnScreen(l);
             ((BaseActivity) getContext()).parallax((l[0] + getWidth() / 2f) / S.w * 2 - 1, (l[1] + getHeight() / 2f) / S.h * 2 - 1);
         }
+    }
+
+    /** Denyut tekan: kad "ditekan masuk" dalam 3D kemudian melantun – maklum balas jelas bila OK ditekan. */
+    @Override
+    public boolean performClick() {
+        animate().cancel();
+        animate().scaleX(scaleTo * 0.92f).scaleY(scaleTo * 0.92f).translationZ(S.px(4)).rotationX(8f).setDuration(90)
+                .setInterpolator(new DecelerateInterpolator()).withEndAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        float s = isFocused() ? scaleTo : 1f;
+                        animate().scaleX(s).scaleY(s).translationZ(isFocused() ? S.px(22) : 0).rotationX(0f).setDuration(260)
+                                .setInterpolator(new OvershootInterpolator(2f)).withEndAction(null).start();
+                    }
+                }).start();
+        return super.performClick();
     }
 
     void animateFocus(boolean gained) {

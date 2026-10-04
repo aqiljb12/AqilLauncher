@@ -417,6 +417,7 @@ final class RemoteServer {
                 return Res.ok();
             }
             case "/api/playlist": return playlist(r.json().optString("url").trim());
+            case "/api/log": return Res.json(obj("log", App.lastCrash()));
             case "/api/probe": {
                 Hub.probe(null);
                 return Res.ok();

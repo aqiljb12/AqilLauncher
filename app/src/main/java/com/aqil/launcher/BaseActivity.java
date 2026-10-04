@@ -65,6 +65,9 @@ public class BaseActivity extends Activity {
     /** Dipanggil oleh Card bila fokus bergerak; nx,ny dalam -1..1. */
     void parallax(float nx, float ny) {}
 
+    /** Warna ambien (warna apl yang difokus) – dilaksana oleh MainActivity. */
+    void ambient(int color) {}
+
     /** Public supaya Hub boleh hantar intent baharu ke aktiviti yang sedang buka. */
     @Override
     public void onNewIntent(android.content.Intent i) {

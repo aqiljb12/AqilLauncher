@@ -24,7 +24,7 @@ import java.util.Map;
 
 /**
  * Launcher utama. Susun atur 1920x1080 (diskala ikut TV):
- * jam & cuaca di atas, butang bulat kanan atas, sidebar kiri, halaman di tengah, dock di bawah.
+ * jam & cuaca di atas, butang bulat kanan atas, sidebar kiri dengan penunjuk meluncur, halaman di kanan.
  */
 public class MainActivity extends BaseActivity {
     private WallpaperView wall;
@@ -33,6 +33,9 @@ public class MainActivity extends BaseActivity {
     private final Map<String, NavItem[]> navs = new HashMap<>();
     private String current;
     private TextView temp, place;
+    private View ambientView, indicator;
+    private int ambientColor;
+    private final String[] order = {"home", "apps", "live", "remote", "settings"};
     private Weather.Icon wicon;
     private boolean receiverOn, dirty;
 
@@ -57,6 +60,8 @@ public class MainActivity extends BaseActivity {
 
         wall = new WallpaperView(this);
         root.addView(wall, new FrameLayout.LayoutParams(-1, -1));
+        ambientView = new View(this);
+        root.addView(ambientView, new FrameLayout.LayoutParams(-1, -1));
         scrim(root, GradientDrawable.Orientation.TOP_BOTTOM, 0, 0, -1, 260, 0xA6000000, 0x00000000);
         scrim(root, GradientDrawable.Orientation.LEFT_RIGHT, 0, 0, 1100, -1, 0x99000000, 0x00000000);
         scrim(root, GradientDrawable.Orientation.TOP_BOTTOM, 0, 520, -1, 560, 0x00000000, 0xD0000000);
@@ -104,54 +109,63 @@ public class MainActivity extends BaseActivity {
             root.addView(c, Ui.at(1484 + i * 104, 50, 80, 80));
         }
 
-        // ---- sidebar kiri
+        // ---- sidebar kiri (satu-satunya navigasi) dengan penunjuk yang meluncur
+        FrameLayout sideBox = new FrameLayout(this);
+        sideBox.setBackground(Ui.glass(S.px(44)));
+        Ui.noClip(sideBox);
+        indicator = new View(this);
+        indicator.setBackground(Ui.selected(S.px(30)));
+        sideBox.addView(indicator, Ui.at(10, 12, 116, 112));
         LinearLayout side = new LinearLayout(this);
         side.setOrientation(LinearLayout.VERTICAL);
-        side.setGravity(Gravity.CENTER_HORIZONTAL);
-        side.setBackground(Ui.glass(S.px(40)));
-        side.setPadding(S.px(10), S.px(14), S.px(10), S.px(14));
+        side.setPadding(S.px(10), S.px(12), S.px(10), S.px(12));
         Ui.noClip(side);
-        root.addView(side, Ui.at(44, 196, 132, -2));
+        sideBox.addView(side, new FrameLayout.LayoutParams(-1, -2));
+        root.addView(sideBox, Ui.at(40, 236, 136, 5 * 118 + 18));
 
         // ---- halaman
         host = new FrameLayout(this);
         Ui.noClip(host);
-        root.addView(host, Ui.at(214, 196, 1660, 780));
+        root.addView(host, Ui.at(214, 186, 1666, 864));
 
-        // ---- dock bawah
-        LinearLayout dock = new LinearLayout(this);
-        dock.setGravity(Gravity.CENTER);
-        dock.setBackground(Ui.glass(S.px(46)));
-        dock.setPadding(S.px(12), S.px(8), S.px(12), S.px(8));
-        Ui.noClip(dock);
-        root.addView(dock, Ui.at((1920 - 880) / 2f, 976, 880, 96));
-
-        String[][] items = {{"home", "Home"}, {"apps", "Apl"}, {"live", "Live TV"}, {"remote", "Remote"}, {"settings", "Tetapan"}};
+        String[] labels = {"Home", "Apl", "Live TV", "Remote", "Tetapan"};
         int[] icons = {R.drawable.ic_home, R.drawable.ic_apps, R.drawable.ic_livetv, R.drawable.ic_gamepad, R.drawable.ic_settings};
-        for (int i = 0; i < items.length; i++) {
-            NavItem s = new NavItem(this, items[i][0], icons[i], items[i][1], 28);
-            NavItem d = new NavItem(this, items[i][0], icons[i], items[i][1], 34);
-            LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(S.px(112), S.px(112));
-            slp.topMargin = slp.bottomMargin = S.px(4);
-            side.addView(s, slp);
-            dock.addView(d, new LinearLayout.LayoutParams(S.px(168), S.px(80)));
-            navs.put(items[i][0], new NavItem[]{s, d});
-            for (final NavItem n : new NavItem[]{s, d}) {
-                n.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        if (n.page.equals("live") && "live".equals(current)) openLive(-1);
-                        else showPage(n.page);
-                        View f = pages.get(current) != null ? pages.get(current).first() : null;
-                        if (f != null) f.requestFocus();
-                    }
-                });
-            }
+        for (int i = 0; i < order.length; i++) {
+            final NavItem n = new NavItem(this, order[i], icons[i], labels[i], 30);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(S.px(116), S.px(112));
+            lp.bottomMargin = S.px(6);
+            side.addView(n, lp);
+            navs.put(order[i], new NavItem[]{n});
+            n.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (n.page.equals("live") && "live".equals(current)) openLive(-1);
+                    else showPage(n.page);
+                    Page p = pages.get(current);
+                    if (p != null && p.first() != null) p.first().requestFocus();
+                }
+            });
         }
         setContentView(root);
 
         reloadWallpaper();
         showPage("home");
+        final String crash = App.takeCrash();
+        if (crash != null) {
+            root.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    String[] lines = crash.split("\n");
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < lines.length && i < 7; i++) sb.append(lines[i].trim()).append('\n');
+                    new GlassMenu(MainActivity.this, "Aqil Launcher terhenti sebelum ini")
+                            .note(sb.toString(), 18, Ui.DIM)
+                            .note("Laporan penuh: telefon › Lagi › Laporan ralat", 22, Ui.WHITE)
+                            .add("OK", null)
+                            .show();
+                }
+            }, 1200);
+        }
         Apps.load(this, new Runnable() {
             @Override
             public void run() {
@@ -188,6 +202,8 @@ public class MainActivity extends BaseActivity {
         }
         if (dirty) refreshCurrent();
         dirty = true;
+        Page cp = current == null ? null : pages.get(current);
+        if (cp != null) cp.onResume();
         updateWeather();
         Weather.refresh(this, false, new Runnable() {
             @Override
@@ -200,6 +216,8 @@ public class MainActivity extends BaseActivity {
     @Override
     protected void onPause() {
         wall.pause();
+        Page p = current == null ? null : pages.get(current);
+        if (p != null) p.onPause();
         super.onPause();
     }
 
@@ -227,6 +245,24 @@ public class MainActivity extends BaseActivity {
         wall.parallax(nx, ny);
     }
 
+    /** Latar berubah warna lembut mengikut apl/saluran yang difokus. */
+    @Override
+    void ambient(int color) {
+        if (!Store.fx(this)) return;
+        int target = color == 0 ? 0 : (color & 0xFFFFFF) | 0x5A000000;
+        if (target == ambientColor) return;
+        android.animation.ValueAnimator va = android.animation.ValueAnimator.ofArgb(ambientColor, target);
+        ambientColor = target;
+        va.setDuration(700);
+        va.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(android.animation.ValueAnimator a) {
+                ambientView.setBackgroundColor((Integer) a.getAnimatedValue());
+            }
+        });
+        va.start();
+    }
+
     // ---------------------------------------------------------------- halaman
 
     private Page page(String name) {
@@ -246,7 +282,10 @@ public class MainActivity extends BaseActivity {
 
     void showPage(String name) {
         Page old = current == null ? null : pages.get(current);
-        if (old != null && !name.equals(current)) old.onHide();
+        if (old != null && !name.equals(current)) {
+            old.onPause();
+            old.onHide();
+        }
         current = name;
         Page p = page(name);
         p.build();
@@ -259,6 +298,13 @@ public class MainActivity extends BaseActivity {
         for (Map.Entry<String, NavItem[]> e : navs.entrySet()) {
             for (NavItem n : e.getValue()) n.setActive(e.getKey().equals(name));
         }
+        for (int i = 0; i < order.length; i++) {
+            if (order[i].equals(name)) {
+                indicator.animate().translationY(S.px(118) * i).setDuration(420)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.4f)).start();
+            }
+        }
+        ambient(0);
     }
 
     /** Bina semula halaman semasa sambil kekalkan fokus jika boleh. */
@@ -337,6 +383,7 @@ public class MainActivity extends BaseActivity {
     }
 
     void bindApp(Card c, final Apps.A app) {
+        c.ambient = app.color | 0xFF000000;
         c.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -359,7 +406,10 @@ public class MainActivity extends BaseActivity {
 
     boolean open(Intent i) {
         try {
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            // Aktiviti dalaman (Live TV, Galeri) MESTI dibuka tanpa NEW_TASK|RESET_TASK: jika tidak, Android
+            // boleh "membuang" permintaan itu kerana task launcher sudah di depan (punca "tekan tak keluar apa-apa").
+            boolean internal = i.getComponent() != null && getPackageName().equals(i.getComponent().getPackageName());
+            if (!internal) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
             startActivity(i);
             overridePendingTransition(R.anim.launch_in, R.anim.launch_out);
             return true;

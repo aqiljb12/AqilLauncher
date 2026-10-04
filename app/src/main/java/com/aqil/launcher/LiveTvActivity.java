@@ -3,7 +3,6 @@ package com.aqil.launcher;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
-import android.util.Base64;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.SurfaceView;
@@ -19,28 +18,14 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.annotation.OptIn;
-import androidx.media3.common.C;
-import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.datasource.DefaultHttpDataSource;
-import androidx.media3.exoplayer.DefaultLoadControl;
-import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManager;
-import androidx.media3.exoplayer.drm.DrmSessionManager;
-import androidx.media3.exoplayer.drm.DrmSessionManagerProvider;
-import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
-import androidx.media3.exoplayer.drm.LocalMediaDrmCallback;
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 /**
  * Live TV guna ExoPlayer (Media3): HLS, DASH, MPEG-TS, MP4, pengepala UA/Referer dari M3U, ClearKey/Widevine.
@@ -192,15 +177,8 @@ public class LiveTvActivity extends BaseActivity {
     }
 
     private void createPlayer() {
-        DefaultRenderersFactory rf = new DefaultRenderersFactory(this)
-                .setEnableDecoderFallback(true)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
-        DefaultLoadControl lc = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(20000, 60000, 1500, 3000)
-                .build();
-        player = new ExoPlayer.Builder(this, rf).setLoadControl(lc).build();
+        player = Streams.player(this, false);
         player.setVideoSurfaceView(surface);
-        player.setPlayWhenReady(true);
         player.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int state) {
@@ -283,70 +261,14 @@ public class LiveTvActivity extends BaseActivity {
     }
 
     private void play(Channel c, String forceMime) {
-        Map<String, String> headers = new HashMap<>();
-        if (c.referer != null) headers.put("Referer", c.referer);
-        if (c.origin != null) headers.put("Origin", c.origin);
-        DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-                .setUserAgent(c.ua != null ? c.ua : Hub.UA)
-                .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(12000)
-                .setReadTimeoutMs(15000)
-                .setDefaultRequestProperties(headers);
-        DefaultMediaSourceFactory msf = new DefaultMediaSourceFactory(this).setDataSourceFactory(http);
-
-        MediaItem.Builder mb = new MediaItem.Builder().setUri(c.url);
-        String low = c.url.toLowerCase(Locale.ROOT);
-        String mime = forceMime;
-        if (mime == null) {
-            if (low.contains(".m3u8") || low.contains("m3u8")) mime = MimeTypes.APPLICATION_M3U8;
-            else if (low.contains(".mpd")) mime = MimeTypes.APPLICATION_MPD;
-            else if (c.drmType != null) mime = MimeTypes.APPLICATION_MPD;
+        try {
+            player.setMediaSource(Streams.source(this, c, forceMime));
+            player.prepare();
+            player.play();
+        } catch (Exception e) {
+            spinner.setVisibility(View.GONE);
+            status.setText(c.name + " tidak dapat dimainkan.\n" + e);
         }
-        if (mime != null) mb.setMimeType(mime);
-
-        if (c.drmType != null && c.drmKey != null) {
-            String type = c.drmType.toLowerCase(Locale.ROOT);
-            if (type.contains("clearkey") && !c.drmKey.startsWith("http")) {
-                final DrmSessionManager mgr = new DefaultDrmSessionManager.Builder()
-                        .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                        .build(new LocalMediaDrmCallback(clearKeyJson(c.drmKey).getBytes()));
-                msf.setDrmSessionManagerProvider(new DrmSessionManagerProvider() {
-                    @Override
-                    public DrmSessionManager get(MediaItem item) {
-                        return mgr;
-                    }
-                });
-            } else {
-                java.util.UUID uuid = type.contains("widevine") ? C.WIDEVINE_UUID : type.contains("playready") ? C.PLAYREADY_UUID : C.CLEARKEY_UUID;
-                mb.setDrmConfiguration(new MediaItem.DrmConfiguration.Builder(uuid).setLicenseUri(c.drmKey).build());
-            }
-        }
-        player.setMediaSource(msf.createMediaSource(mb.build()));
-        player.prepare();
-        player.play();
-    }
-
-    /** "kid:key[,kid:key]" (hex) → JSON ClearKey yang ExoPlayer faham. */
-    private static String clearKeyJson(String spec) {
-        if (spec.trim().startsWith("{")) return spec;
-        StringBuilder sb = new StringBuilder("{\"keys\":[");
-        boolean first = true;
-        for (String pair : spec.split(",")) {
-            String[] kv = pair.trim().split(":");
-            if (kv.length != 2) continue;
-            if (!first) sb.append(',');
-            first = false;
-            sb.append("{\"kty\":\"oct\",\"kid\":\"").append(b64(kv[0])).append("\",\"k\":\"").append(b64(kv[1])).append("\"}");
-        }
-        return sb.append("],\"type\":\"temporary\"}").toString();
-    }
-
-    private static String b64(String hex) {
-        hex = hex.trim();
-        if (!hex.matches("[0-9a-fA-F]+")) return hex; // sudah base64
-        byte[] b = new byte[hex.length() / 2];
-        for (int i = 0; i < b.length; i++) b[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-        return Base64.encodeToString(b, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
     }
 
     private void onError(PlaybackException e) {

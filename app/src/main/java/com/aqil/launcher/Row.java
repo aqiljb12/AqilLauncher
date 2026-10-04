@@ -9,6 +9,7 @@ import android.widget.TextView;
 /** Baris kaca boleh fokus: tajuk, sub-tajuk dan nilai di kanan (menu, tetapan, senarai). */
 final class Row extends Card {
     private final TextView title, sub, right;
+    private LinearLayout box;
 
     Row(Context c, String t, String s, String r) {
         super(c, 22);
@@ -16,7 +17,8 @@ final class Row extends Card {
         LinearLayout box = new LinearLayout(c);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER_VERTICAL);
-        box.setPadding(S.px(30), 0, S.px(200), 0);
+        box.setPadding(S.px(30), 0, S.px(30), 0);
+        this.box = box;
         title = Ui.text(c, t, 30, Ui.WHITE, Ui.MEDIUM);
         sub = Ui.text(c, "", 22, Ui.DIM, Ui.MEDIUM);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -37,6 +39,7 @@ final class Row extends Card {
         sub.setText(s == null ? "" : s);
         sub.setVisibility(s == null ? GONE : VISIBLE);
         right.setText(r == null ? "" : r);
+        box.setPadding(S.px(30), 0, S.px(r == null || r.isEmpty() ? 30 : 260), 0);
         return this;
     }
 }
