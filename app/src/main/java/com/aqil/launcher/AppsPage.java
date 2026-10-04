@@ -29,6 +29,7 @@ final class AppsPage extends Page {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(S.px(14), S.px(24), S.px(14), S.px(60));
         Ui.noClip(col);
+        Ui.clipToBounds(sv);
         sv.addView(col);
         LinearLayout row = null;
         firstView = null;

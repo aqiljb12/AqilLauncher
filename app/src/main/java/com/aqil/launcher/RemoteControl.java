@@ -183,6 +183,20 @@ final class RemoteControl {
         return a.setText(text, append) ? null : "Tiada kotak teks yang aktif pada TV";
     }
 
+    /** Mod tetikus: m = gerak (dx,dy), c = klik di kursor, s = leret dari kursor. */
+    static String cursor(String op, float dx, float dy) {
+        RemoteAccessibilityService a = RemoteAccessibilityService.instance;
+        if (a == null) return NEED_A11Y;
+        if (android.os.Build.VERSION.SDK_INT < 24) return "Tetikus perlukan Android 7 atau lebih baharu";
+        boolean ok;
+        switch (op) {
+            case "m": ok = a.cursorMove(dx, dy); break;
+            case "c": ok = a.cursorClick(); break;
+            default: ok = a.cursorScroll(dx, dy); break;
+        }
+        return ok ? null : "Sistem TV menolak sentuhan di sini (apl ini mungkin tak menyokong sentuhan)";
+    }
+
     static String touch(String type, float x1, float y1, float x2, float y2) {
         RemoteAccessibilityService a = RemoteAccessibilityService.instance;
         if (a == null) return NEED_A11Y;

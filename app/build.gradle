@@ -10,8 +10,8 @@ android {
         applicationId 'com.aqil.launcher'
         minSdk 21
         targetSdk 33
-        versionCode 9
-        versionName '4.3.2'
+        versionCode 10
+        versionName '4.4.0'
     }
 
     signingConfigs {

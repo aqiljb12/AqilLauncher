@@ -300,6 +300,11 @@ final class RemoteServer {
                 }
                 return;
             }
+            if (r.path.equals("/hls")) { // proksi siaran untuk "Tonton di telefon" (strim terus, bukan dalam RAM)
+                if (!Store.validToken(ctx, r.cookie("t"))) write(s.getOutputStream(), Res.error(401, "Perlu PIN"));
+                else proxy(s, r);
+                return;
+            }
             Res res;
             try {
                 res = route(r);
@@ -445,7 +450,15 @@ final class RemoteServer {
             JSONObject j = new JSONObject(msg);
             if (j.has("ping")) return "{\"pong\":1}";
             String err;
-            if (j.has("k")) err = RemoteControl.key(ctx, j.getString("k"));
+            if (j.has("cm")) {
+                JSONArray d = j.getJSONArray("cm");
+                err = RemoteControl.cursor("m", (float) d.optDouble(0), (float) d.optDouble(1));
+                if (err == null) return null; // gerak kursor kerap: tiada balasan jika berjaya
+            } else if (j.has("cc")) err = RemoteControl.cursor("c", 0, 0);
+            else if (j.has("cs")) {
+                JSONArray d = j.getJSONArray("cs");
+                err = RemoteControl.cursor("s", (float) d.optDouble(0), (float) d.optDouble(1));
+            } else if (j.has("k")) err = RemoteControl.key(ctx, j.getString("k"));
             else if (j.has("t")) err = RemoteControl.touch(j.getString("t"), (float) j.optDouble("x"), (float) j.optDouble("y"),
                     (float) j.optDouble("x2"), (float) j.optDouble("y2"));
             else return null;
@@ -493,6 +506,11 @@ final class RemoteServer {
                 return Res.result(RemoteControl.touch(j.optString("t"), (float) j.optDouble("x"), (float) j.optDouble("y"),
                         (float) j.optDouble("x2"), (float) j.optDouble("y2")));
             }
+            case "/api/cursor": {
+                JSONObject j = r.json();
+                return Res.result(RemoteControl.cursor(j.optString("op", "m"), (float) j.optDouble("dx", 0), (float) j.optDouble("dy", 0)));
+            }
+            case "/api/streamurl": return streamUrl(r);
             case "/api/channels": return channels();
             case "/api/play": {
                 final int i = r.json().optInt("i", -1);
@@ -685,6 +703,138 @@ final class RemoteServer {
         put(o, "count", count[0]);
         put(o, "msg", err[0] == null ? "" : err[0]);
         return Res.json(o);
+    }
+
+    // ------------------------------------------------------------------ tonton di telefon (proksi HLS)
+
+    private static final java.util.regex.Pattern URI_ATTR = java.util.regex.Pattern.compile("URI=\"([^\"]+)\"");
+
+    /** URL main untuk telefon: melalui proksi TV (pengepala saluran dipakai, tiada isu CORS). */
+    private Res streamUrl(Req r) throws Exception {
+        int i;
+        try {
+            i = Integer.parseInt(r.q.get("i"));
+        } catch (Exception e) {
+            return Res.error(400, "Saluran tak sah");
+        }
+        List<Channel> l = Hub.channels;
+        if (i < 0 || i >= l.size()) return Res.error(404, "Saluran tak dijumpai");
+        Channel ch = l.get(i);
+        if (ch.drmType != null) return Res.result("Saluran ini dilindungi DRM – hanya boleh ditonton di TV");
+        String url = ch.url;
+        // Xtream: pelayar telefon tak boleh main MPEG-TS terus, minta versi HLS (.m3u8) dari panel
+        if (ch.xtId != 0 && url.endsWith(".ts")) url = url.substring(0, url.length() - 3) + ".m3u8";
+        JSONObject o = obj("ok", true);
+        put(o, "url", "/hls?c=" + i + "&u=" + java.net.URLEncoder.encode(url, "UTF-8"));
+        put(o, "name", ch.name);
+        put(o, "xtream", ch.xtId != 0);
+        return Res.json(o);
+    }
+
+    private void proxy(Socket s, Req r) throws Exception {
+        OutputStream out = s.getOutputStream();
+        String u = r.q.get("u");
+        if (u == null || !(u.startsWith("http://") || u.startsWith("https://"))) {
+            write(out, Res.error(400, "URL tak sah"));
+            return;
+        }
+        int ci = -1;
+        try {
+            ci = Integer.parseInt(r.q.get("c"));
+        } catch (Exception ignored) {
+        }
+        List<Channel> l = Hub.channels;
+        Channel ch = ci >= 0 && ci < l.size() ? l.get(ci) : null;
+        java.net.HttpURLConnection con = (java.net.HttpURLConnection) new java.net.URL(u).openConnection();
+        try {
+            con.setConnectTimeout(10000);
+            con.setReadTimeout(20000);
+            con.setInstanceFollowRedirects(true);
+            con.setRequestProperty("User-Agent", ch != null && ch.ua != null ? ch.ua : Hub.UA);
+            if (ch != null && ch.referer != null) con.setRequestProperty("Referer", ch.referer);
+            if (ch != null && ch.origin != null) con.setRequestProperty("Origin", ch.origin);
+            String range = r.h.get("range");
+            if (range != null) con.setRequestProperty("Range", range);
+            int code = con.getResponseCode();
+            if (code >= 400) {
+                write(out, Res.error(502, "Siaran membalas HTTP " + code));
+                return;
+            }
+            String ct = con.getContentType();
+            java.net.URL fin = con.getURL();
+            boolean playlist = (ct != null && ct.toLowerCase(Locale.ROOT).contains("mpegurl"))
+                    || fin.getPath().toLowerCase(Locale.ROOT).endsWith(".m3u8") || fin.getPath().toLowerCase(Locale.ROOT).endsWith(".m3u");
+            InputStream in = con.getInputStream();
+            if (playlist) {
+                ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = in.read(buf)) > 0 && bo.size() < 2 * 1024 * 1024) bo.write(buf, 0, n);
+                String text = bo.toString("UTF-8");
+                if (text.trim().startsWith("#EXTM3U")) {
+                    Res res = new Res();
+                    res.type = "application/vnd.apple.mpegurl";
+                    res.body = rewrite(text, fin, ci).getBytes("UTF-8");
+                    write(out, res);
+                    return;
+                }
+                Res res = new Res(); // bukan senarai main sebenarnya: hantar seperti asal
+                res.type = ct == null ? "application/octet-stream" : ct;
+                res.body = bo.toByteArray();
+                write(out, res);
+                return;
+            }
+            long len = con.getContentLengthLong();
+            StringBuilder head = new StringBuilder();
+            head.append("HTTP/1.1 ").append(code == 206 ? "206 Partial Content" : "200 OK").append("\r\n");
+            head.append("Content-Type: ").append(ct == null ? "video/mp2t" : ct).append("\r\n");
+            if (len >= 0) head.append("Content-Length: ").append(len).append("\r\n");
+            String cr = con.getHeaderField("Content-Range");
+            if (cr != null) head.append("Content-Range: ").append(cr).append("\r\n");
+            head.append("Accept-Ranges: bytes\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+            out.write(head.toString().getBytes("UTF-8"));
+            // segmen biasa beberapa MB; had masa/saiz supaya pekerja tak terikat selamanya pada strim tanpa had
+            byte[] buf = new byte[64 * 1024];
+            long sent = 0, deadline = System.currentTimeMillis() + 90000;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                sent += n;
+                if (sent > 64L * 1024 * 1024 || System.currentTimeMillis() > deadline) break;
+            }
+            out.flush();
+        } finally {
+            con.disconnect();
+        }
+    }
+
+    /** Tulis semula setiap URI dalam senarai main HLS supaya melalui proksi TV. */
+    private static String rewrite(String text, java.net.URL base, int ci) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (String raw : text.split("\n")) {
+            String line = raw.trim();
+            if (line.isEmpty()) {
+                sb.append('\n');
+                continue;
+            }
+            if (line.startsWith("#")) {
+                java.util.regex.Matcher m = URI_ATTR.matcher(line);
+                StringBuffer b = new StringBuffer();
+                while (m.find()) {
+                    m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement("URI=\"" + proxied(base, m.group(1), ci) + "\""));
+                }
+                m.appendTail(b);
+                sb.append(b).append('\n');
+            } else {
+                sb.append(proxied(base, line, ci)).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String proxied(java.net.URL base, String ref, int ci) throws Exception {
+        String abs = new java.net.URL(base, ref).toString();
+        return "/hls?c=" + ci + "&u=" + java.net.URLEncoder.encode(abs, "UTF-8");
     }
 
     // ------------------------------------------------------------------ gambar & video

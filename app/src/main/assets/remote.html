@@ -78,6 +78,9 @@ input::placeholder{color:rgba(255,255,255,.4)}
 .wp div{aspect-ratio:16/10;border-radius:16px;display:flex;align-items:flex-end;justify-content:center;padding:6px;font-size:12px;border:2px solid transparent;text-shadow:0 1px 4px #000}
 .wp div.on{border-color:#5aa9ff;box-shadow:0 0 14px rgba(90,169,255,.6)}
 .ch img{width:54px;height:32px;object-fit:contain;flex:none}.ch.dead{opacity:.45}
+#player{position:fixed;inset:0;z-index:35;background:rgba(0,0,0,.92);display:none;flex-direction:column;justify-content:center;padding:16px}
+#player.on{display:flex}#player video{width:100%;max-height:70vh;border-radius:18px;background:#000}
+#player h3{margin:0 0 10px;font-size:20px}#player p{color:var(--t2);font-size:13px;margin:10px 2px}
 .st{display:flex;justify-content:space-between;padding:14px 18px;color:var(--t2);font-size:14px}.st b{color:#fff;font-weight:500}
 </style>
 </head>
@@ -114,8 +117,9 @@ input::placeholder{color:rgba(255,255,255,.4)}
     <div class="btn" data-k="recents" data-norep="1">Terkini</div>
     <div class="btn" data-k="chup">CH +</div>
    </div>
-   <div class="sec">Sentuh skrin TV (perlu Kebolehcapaian)</div>
-   <div class="touch glass" id="touch">Ketuk / leret di sini = sentuh skrin TV</div>
+   <div class="sec">Tetikus TV (perlu Kebolehcapaian)</div>
+   <div class="touch glass" id="touch" style="text-align:center;line-height:1.6">Leret = gerak kursor di TV<br>Ketuk = klik &nbsp;•&nbsp; 2 jari = skrol</div>
+   <div class="row"><div class="btn" data-sc="0,-0.35">Leret ↑</div><div class="btn" data-sc="0,0.35">Leret ↓</div><div class="btn" data-sc="-0.35,0">Leret ←</div><div class="btn" data-sc="0.35,0">Leret →</div></div>
   </section>
 
   <section class="tab" id="t-apps">
@@ -199,6 +203,12 @@ input::placeholder{color:rgba(255,255,255,.4)}
 <div id="login"><div class="glass"><h2>Aqil Remote</h2><p>Masukkan PIN yang dipaparkan di TV<br>(Skrin utama › Remote Telefon)</p>
  <input id="pin" type="tel" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off">
  <div class="row" style="margin-top:16px"><div class="btn pri" id="pairbtn">Sambung</div></div></div></div>
+<div class="sheet" id="chsheet"><div class="glass">
+ <div id="chname" style="font-size:20px;font-weight:700;margin:4px 4px 12px"></div>
+ <div class="row"><div class="btn pri" id="ch-tv">Main di TV</div><div class="btn" id="ch-phone">Tonton di telefon</div></div>
+ <div class="row"><div class="btn" id="ch-close">Tutup</div></div></div></div>
+<div id="player"><h3 id="ptitle"></h3><video id="pv" controls playsinline autoplay></video><p id="pnote"></p>
+ <div class="row"><div class="btn pri" id="pclose">Tutup</div></div></div>
 <div class="sheet" id="sheet"><div class="glass"><img id="shimg" alt="">
  <div class="row"><div class="btn pri" id="sh-show">Papar di TV</div></div>
  <div class="row"><div class="btn" id="sh-wall">Jadikan wallpaper</div><div class="btn red" id="sh-del">Padam</div></div>
@@ -261,15 +271,23 @@ $$('[data-k]').forEach(el=>{
   ['pointerup','pointerleave','pointercancel'].forEach(ev=>el.addEventListener(ev,stop));
 });
 
-/* ---- touchpad ---- */
-(()=>{const el=$('#touch');let s=null;
- const pos=e=>{const r=el.getBoundingClientRect();return[(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height]};
- el.addEventListener('pointerdown',e=>{s=pos(e);s.t=Date.now();el.setPointerCapture(e.pointerId)});
- el.addEventListener('pointerup',e=>{if(!s)return;const p=pos(e);const dx=p[0]-s[0],dy=p[1]-s[1];
-  const d=document.createElement('div');d.className='dot';const r=el.getBoundingClientRect();d.style.left=(e.clientX-r.left)+'px';d.style.top=(e.clientY-r.top)+'px';el.appendChild(d);setTimeout(()=>d.remove(),500);
-  buzz();
-  const m=Math.hypot(dx,dy)<.04?{t:'tap',x:p[0],y:p[1]}:{t:'swipe',x:s[0],y:s[1],x2:p[0],y2:p[1]};if(!wsSend(m))jpost('/api/touch',m);s=null});
+/* ---- trackpad: gerak kursor TV, ketuk = klik, 2 jari = skrol ---- */
+function cursorSend(o,op,dx,dy){if(!wsSend(o))jpost('/api/cursor',{op,dx,dy})}
+(()=>{const el=$('#touch');const pts=new Map();let moved=0,t0=0,acc=[0,0],timer=null,two=null;const SENS=1.5;
+ const avg=()=>{let x=0,y=0;pts.forEach(p=>{x+=p[0];y+=p[1]});return[x/pts.size,y/pts.size]};
+ const flush=()=>{timer=null;if(acc[0]||acc[1]){const d=acc;acc=[0,0];cursorSend({cm:d},'m',d[0],d[1])}};
+ el.addEventListener('pointerdown',e=>{e.preventDefault();try{el.setPointerCapture(e.pointerId)}catch(_){}pts.set(e.pointerId,[e.clientX,e.clientY]);
+  if(pts.size===1){moved=0;t0=Date.now()}else if(pts.size===2){two=avg()}});
+ el.addEventListener('pointermove',e=>{const p=pts.get(e.pointerId);if(!p)return;const dx=e.clientX-p[0],dy=e.clientY-p[1];
+  pts.set(e.pointerId,[e.clientX,e.clientY]);moved+=Math.abs(dx)+Math.abs(dy);
+  if(pts.size===1){const r=el.getBoundingClientRect();acc=[acc[0]+dx/r.width*SENS,acc[1]+dy/r.height*SENS];if(!timer)timer=setTimeout(flush,30)}});
+ const up=e=>{if(!pts.has(e.pointerId))return;const r=el.getBoundingClientRect();
+  if(pts.size>=2&&two){const a=avg(),dx=(a[0]-two[0])/r.width,dy=(a[1]-two[1])/r.height;two=null;pts.clear();
+   if(Math.hypot(dx,dy)>.04){buzz();cursorSend({cs:[dx,dy]},'s',dx,dy)}return}
+  pts.delete(e.pointerId);if(pts.size===0&&moved<12&&Date.now()-t0<350){buzz();flush();cursorSend({cc:1},'c',0,0)}};
+ el.addEventListener('pointerup',up);el.addEventListener('pointercancel',e=>{pts.delete(e.pointerId);two=null});
 })();
+$$('[data-sc]').forEach(b=>b.addEventListener('click',()=>{const d=b.dataset.sc.split(',').map(Number);buzz();cursorSend({cs:d},'s',d[0],d[1])}));
 
 /* ---- apl ---- */
 let APPS=null;
@@ -293,7 +311,24 @@ async function loadCh(){
 $('#chq').oninput=loadCh;
 $('#probe').onclick=async()=>{await jpost('/api/probe',{});toast('Menyemak saluran di TV… buka semula tab ini sebentar lagi');setTimeout(()=>{CH=null;loadCh()},20000)};
 $('#chrefresh').onclick=()=>{CH=null;loadCh();toast('Dimuat semula')};
-$('#chs').onclick=e=>{const c=e.target.closest('.ch');if(c){buzz();jpost('/api/play',{i:+c.dataset.i}).then(j=>j.ok&&toast('Main di TV'))}};
+let curCh=-1;
+$('#chs').onclick=e=>{const c=e.target.closest('.ch');if(!c)return;buzz();curCh=+c.dataset.i;$('#chname').textContent=c.querySelector('span').textContent;$('#chsheet').classList.add('on')};
+$('#ch-close').onclick=()=>$('#chsheet').classList.remove('on');
+$('#ch-tv').onclick=async()=>{$('#chsheet').classList.remove('on');const j=await jpost('/api/play',{i:curCh});if(j.ok)toast('Main di TV')};
+$('#ch-phone').onclick=async()=>{$('#chsheet').classList.remove('on');const j=await(await api('/api/streamurl?i='+curCh)).json();if(j.ok===false){toast(j.msg||'Tak boleh dimainkan');return}openPlayer(j)};
+/* ---- tonton di telefon (melalui proksi TV) ---- */
+let hls=null;
+function perr(){toast('Saluran ini tak dapat dimainkan di telefon')}
+function loadHls(){return new Promise(r=>{if(window.Hls)return r(window.Hls);const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js';sc.onload=()=>r(window.Hls);sc.onerror=()=>r(null);document.head.appendChild(sc)})}
+function openPlayer(j){
+  const v=$('#pv');$('#ptitle').textContent=j.name;
+  $('#pnote').textContent=(j.xtream?'Akaun IPTV anda mungkin hanya benarkan 1 sambungan: siaran di TV boleh terhenti semasa tonton di telefon. ':'')+'Siaran dihantar melalui TV (Wi-Fi yang sama).';
+  $('#player').classList.add('on');v.onerror=perr;
+  if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=j.url;v.play().catch(()=>{})}
+  else loadHls().then(H=>{if(!H||!H.isSupported())return perr();if(hls)hls.destroy();hls=new H();hls.loadSource(j.url);hls.attachMedia(v);
+    hls.on(H.Events.MANIFEST_PARSED,()=>v.play().catch(()=>{}));hls.on(H.Events.ERROR,(e,d)=>{if(d.fatal)perr()})});
+}
+$('#pclose').onclick=()=>{const v=$('#pv');v.onerror=null;v.pause();if(hls){hls.destroy();hls=null}v.removeAttribute('src');v.load();$('#player').classList.remove('on')};
 $('#savepl').onclick=async()=>{toast('Memuat turun senarai…');const j=await jpost('/api/playlist',{url:$('#pl').value});CH=null;if(j.ok)toast(j.count+' saluran dimuatkan')};
 
 /* ---- gambar ---- */

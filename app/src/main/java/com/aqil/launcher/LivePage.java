@@ -177,6 +177,7 @@ final class LivePage extends Page {
         LinearLayout gr = new LinearLayout(a);
         gr.setPadding(S.px(14), S.px(12), S.px(14), S.px(12));
         Ui.noClip(gr);
+        Ui.clipToBounds(gs);
         gs.addView(gr);
         gr.addView(chip("Semua", null), Ui.lin(-2, 58, 12));
         for (String g : groups) gr.addView(chip(g, g), Ui.lin(-2, 58, 12));
@@ -198,6 +199,7 @@ final class LivePage extends Page {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(S.px(22), S.px(22), S.px(22), S.px(60));
         Ui.noClip(col);
+        Ui.clipToBounds(sv);
         sv.addView(col);
         LinearLayout row = null;
         Card firstCard = null;

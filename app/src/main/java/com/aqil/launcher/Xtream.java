@@ -154,31 +154,50 @@ final class Xtream {
         return out;
     }
 
-    /** "Sedang: … • Seterusnya: …" dari EPG ringkas panel, atau null. Panggil di thread latar. */
-    static String nowNext(Context c, Channel ch) {
+    /** Satu rancangan dalam jadual EPG. */
+    static final class Prog {
+        String title;
+        long start, end; // ms
+
+        String hhmm(long t) {
+            return new SimpleDateFormat("HH:mm", Locale.ROOT).format(new Date(t));
+        }
+    }
+
+    /** Jadual EPG ringkas panel (rancangan sekarang dulu), atau senarai kosong. Panggil di thread latar. */
+    static List<Prog> epg(Context c, Channel ch, int limit) {
+        List<Prog> out = new ArrayList<>();
         String[] x = Store.xtream(c);
-        if (x == null || ch.xtId == 0) return null;
+        if (x == null || ch.xtId == 0) return out;
         try {
-            JSONObject o = new JSONObject(get(api(x, "get_short_epg") + "&stream_id=" + ch.xtId + "&limit=2"));
+            JSONObject o = new JSONObject(get(api(x, "get_short_epg") + "&stream_id=" + ch.xtId + "&limit=" + limit));
             JSONArray l = o.optJSONArray("epg_listings");
-            if (l == null || l.length() == 0) return null;
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < l.length() && i < 2; i++) {
+            long now = System.currentTimeMillis();
+            for (int i = 0; l != null && i < l.length(); i++) {
                 JSONObject e = l.getJSONObject(i);
-                String t = e.optString("title");
+                Prog p = new Prog();
+                p.title = e.optString("title");
                 try {
-                    t = new String(Base64.decode(t, Base64.DEFAULT), "UTF-8");
+                    p.title = new String(Base64.decode(p.title, Base64.DEFAULT), "UTF-8").trim();
                 } catch (Exception ignored) {
                 }
-                String start = e.optString("start", "");
-                String hhmm = start.length() >= 16 ? start.substring(11, 16) : "";
-                if (i > 0) sb.append("   •   ");
-                sb.append(i == 0 ? "Sedang: " : "Seterusnya " + hhmm + ": ").append(t.trim());
+                p.start = e.optLong("start_timestamp", 0) * 1000;
+                p.end = e.optLong("stop_timestamp", 0) * 1000;
+                if (p.end > 0 && p.end < now) continue; // dah tamat
+                out.add(p);
             }
-            return sb.toString();
-        } catch (Exception e) {
-            return null;
+        } catch (Exception ignored) {
         }
+        return out;
+    }
+
+    /** "Sedang: … • Seterusnya HH:MM: …" atau null. Panggil di thread latar. */
+    static String nowNext(Context c, Channel ch) {
+        List<Prog> l = epg(c, ch, 2);
+        if (l.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("Sedang: ").append(l.get(0).title);
+        if (l.size() > 1) sb.append("   •   Seterusnya ").append(l.get(1).hhmm(l.get(1).start)).append(": ").append(l.get(1).title);
+        return sb.toString();
     }
 
     static String get(String url) throws Exception {

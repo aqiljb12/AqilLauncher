@@ -55,7 +55,9 @@ public class LiveTvActivity extends BaseActivity {
     private SurfaceView surface;
     private FrameLayout videoBox, panel, info;
     private ListView list;
-    private TextView infoNum, infoName, infoGroup, status, digits, resLabel;
+    private TextView infoNum, infoName, infoGroup, status, digits, resLabel, epgNow, epgNext;
+    private View epgTrack, epgBar;
+    private FrameLayout.LayoutParams infoLp;
     private ImageView infoLogo;
     private ProgressBar spinner;
     private ChAdapter adapter;
@@ -105,11 +107,11 @@ public class LiveTvActivity extends BaseActivity {
             new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    final String s = Xtream.nowNext(LiveTvActivity.this, ch);
-                    if (s != null) runOnUiThread(new Runnable() {
+                    final List<Xtream.Prog> l = Xtream.epg(LiveTvActivity.this, ch, 3);
+                    runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            if (!isDestroyed() && epgFor == ch) infoGroup.setText(s);
+                            if (!isDestroyed() && epgFor == ch) showEpg(l);
                         }
                     });
                 }
@@ -178,7 +180,20 @@ public class LiveTvActivity extends BaseActivity {
         info.addView(infoName, Ui.at(224, 64, 620, -2));
         infoGroup = Ui.text(this, "", 24, Ui.DIM, Ui.MEDIUM);
         info.addView(infoGroup, Ui.at(224, 116, 620, -2));
+        // ---- jadual: Sekarang (dengan bar kemajuan) & Seterusnya
+        epgNow = Ui.text(this, "", 24, Ui.WHITE, Ui.MEDIUM);
+        info.addView(epgNow, Ui.at(26, 168, 828, -2));
+        epgTrack = new View(this);
+        epgTrack.setBackground(Ui.solid(0x33FFFFFF, S.px(3)));
+        info.addView(epgTrack, Ui.at(26, 206, 828, 6));
+        epgBar = new View(this);
+        epgBar.setBackground(Ui.solid(0xFF2E8BFF, S.px(3)));
+        info.addView(epgBar, Ui.at(26, 206, 0, 6));
+        epgNext = Ui.text(this, "", 22, Ui.DIM, Ui.MEDIUM);
+        info.addView(epgNext, Ui.at(26, 224, 828, -2));
+        showEpg(null);
         FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(S.px(880), S.px(164), Gravity.START | Gravity.BOTTOM);
+        infoLp = ilp;
         ilp.leftMargin = S.px(70);
         ilp.bottomMargin = S.px(60);
         info.setAlpha(0f);
@@ -326,6 +341,7 @@ public class LiveTvActivity extends BaseActivity {
         // EPG diambil hanya bila pilihan berhenti 700ms (zap laju tidak mencipta banyak thread rangkaian)
         h.removeCallbacks(epgFetch);
         epgFor = c; // hasil EPG lama untuk saluran lain akan diabaikan
+        showEpg(null);
         if (c.xtId != 0) h.postDelayed(epgFetch, 700);
         Img.load(infoLogo, c.logo, S.px(170));
         info.animate().cancel();
@@ -333,6 +349,38 @@ public class LiveTvActivity extends BaseActivity {
         info.setTranslationY(0);
         h.removeCallbacks(hideInfo);
         h.postDelayed(hideInfo, 4500);
+    }
+
+    /** Papar jadual (null/kosong = sembunyi & kecilkan kotak info). */
+    private void showEpg(List<Xtream.Prog> l) {
+        boolean has = l != null && !l.isEmpty();
+        int vis = has ? View.VISIBLE : View.GONE;
+        epgNow.setVisibility(vis);
+        epgNext.setVisibility(View.GONE);
+        epgTrack.setVisibility(View.GONE);
+        epgBar.setVisibility(View.GONE);
+        if (infoLp != null) {
+            infoLp.height = S.px(has ? 270 : 164);
+            info.setLayoutParams(infoLp);
+        }
+        if (!has) return;
+        Xtream.Prog now = l.get(0);
+        long t = System.currentTimeMillis();
+        boolean airing = now.start > 0 && now.end > now.start && t >= now.start;
+        epgNow.setText((airing ? "Sekarang  " : "Akan datang  ") + (now.start > 0 ? now.hhmm(now.start) + "–" + now.hhmm(now.end) + "   " : "") + now.title);
+        if (airing) {
+            float f = U.clamp((t - now.start) / (float) (now.end - now.start), 0f, 1f);
+            FrameLayout.LayoutParams bp = (FrameLayout.LayoutParams) epgBar.getLayoutParams();
+            bp.width = Math.max(S.px(6), Math.round(S.px(828) * f));
+            epgBar.setLayoutParams(bp);
+            epgTrack.setVisibility(View.VISIBLE);
+            epgBar.setVisibility(View.VISIBLE);
+        }
+        if (l.size() > 1) {
+            Xtream.Prog n = l.get(1);
+            epgNext.setText("Seterusnya  " + (n.start > 0 ? n.hhmm(n.start) + "   " : "") + n.title);
+            epgNext.setVisibility(View.VISIBLE);
+        }
     }
 
     private void start(int i) {

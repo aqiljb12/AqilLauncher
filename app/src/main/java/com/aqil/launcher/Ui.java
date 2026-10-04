@@ -103,6 +103,18 @@ final class Ui {
         return v == -1 ? -1 : v == -2 ? -2 : S.px(v);
     }
 
+    /**
+     * Klip kawasan skrol pada sempadannya sendiri. Perlu kerana halaman memakai clipChildren=false (supaya kad
+     * yang membesar tak terpotong); tanpa ini kad ber-elevation yang diskrol keluar dilukis di atas tajuk/jam.
+     * Klip outline ialah sifat RenderNode, jadi ia turut memotong paparan ber-Z (berbeza dengan clipRect biasa).
+     */
+    static void clipToBounds(View... vs) {
+        for (View v : vs) {
+            v.setOutlineProvider(android.view.ViewOutlineProvider.BOUNDS);
+            v.setClipToOutline(true);
+        }
+    }
+
     static void noClip(View... vs) {
         for (View v : vs) {
             if (v instanceof android.view.ViewGroup) {

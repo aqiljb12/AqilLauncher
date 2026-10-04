@@ -35,6 +35,7 @@ final class SettingsPage extends Page {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setPadding(S.px(14), S.px(16), S.px(14), S.px(80));
         Ui.noClip(col);
+        Ui.clipToBounds(sv);
         sv.addView(col);
 
         col.addView(section("Wallpaper"));
@@ -43,6 +44,7 @@ final class SettingsPage extends Page {
         LinearLayout walls = new LinearLayout(a);
         walls.setPadding(S.px(6), S.px(16), S.px(30), S.px(20));
         Ui.noClip(walls);
+        Ui.clipToBounds(hs);
         hs.addView(walls);
         String cur = Store.wallpaper(a);
         firstView = null;

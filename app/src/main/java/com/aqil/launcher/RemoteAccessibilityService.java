@@ -2,6 +2,14 @@ package com.aqil.launcher;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.WindowManager;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
@@ -15,6 +23,8 @@ import android.view.accessibility.AccessibilityWindowInfo;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Bagi telefon kawal apl LAIN (bukan launcher sahaja): Back/Home/Recents, navigasi fokus,
@@ -29,6 +39,18 @@ public class RemoteAccessibilityService extends AccessibilityService {
     /** Nod terakhir yang dilaporkan menerima fokus (sesetengah apl TV tak menjawab findFocus()). */
     private volatile AccessibilityNodeInfo lastFocused;
     private static final int MAX_NODES = 1500;
+    private final Handler main = new Handler(Looper.getMainLooper());
+
+    // ---- kursor tetikus (overlay kebolehcapaian: tiada kebenaran tambahan, tidak menerima sentuhan)
+    private CursorView cursor;
+    private WindowManager.LayoutParams cursorLp;
+    private volatile float cx = -1, cy = -1;
+    private final Runnable hideCursor = new Runnable() {
+        @Override
+        public void run() {
+            if (cursor != null) cursor.setVisibility(View.GONE);
+        }
+    };
 
     @Override
     protected void onServiceConnected() {
@@ -56,6 +78,7 @@ public class RemoteAccessibilityService extends AccessibilityService {
     public boolean onUnbind(android.content.Intent i) {
         if (instance == this) instance = null;
         lastFocused = null;
+        removeCursor();
         return super.onUnbind(i);
     }
 
@@ -63,6 +86,7 @@ public class RemoteAccessibilityService extends AccessibilityService {
     public void onDestroy() {
         if (instance == this) instance = null;
         lastFocused = null;
+        removeCursor();
         super.onDestroy();
     }
 
@@ -249,21 +273,165 @@ public class RemoteAccessibilityService extends AccessibilityService {
         return swipe(x, y, x, y, 60);
     }
 
-    /** Koordinat 0..1 mengikut saiz skrin. */
+    /** Koordinat 0..1 mengikut saiz skrin. Menunggu sistem selesaikan gerak isyarat (bukan sekadar hantar). */
     boolean swipe(float x1, float y1, float x2, float y2, long ms) {
         if (Build.VERSION.SDK_INT < 24) return false;
         if (Float.isNaN(x1) || Float.isNaN(y1)) return false;
+        DisplayMetrics m = metrics();
+        float ax = U.clamp(x1, 0, 1) * (m.widthPixels - 1), ay = U.clamp(y1, 0, 1) * (m.heightPixels - 1);
+        float bx = Float.isNaN(x2) ? ax : U.clamp(x2, 0, 1) * (m.widthPixels - 1);
+        float by = Float.isNaN(y2) ? ay : U.clamp(y2, 0, 1) * (m.heightPixels - 1);
+        return gesture(ax, ay, bx, by, ms);
+    }
+
+    /** Hantar gerak isyarat dalam piksel skrin dan tunggu keputusan (selesai / dibatalkan sistem). */
+    private boolean gesture(float ax, float ay, float bx, float by, long ms) {
+        if (Build.VERSION.SDK_INT < 24) return false;
         try {
-            DisplayMetrics m = metrics();
             Path p = new Path();
-            p.moveTo(U.clamp(x1, 0, 1) * (m.widthPixels - 1), U.clamp(y1, 0, 1) * (m.heightPixels - 1));
-            if (!Float.isNaN(x2) && !Float.isNaN(y2) && (x1 != x2 || y1 != y2))
-                p.lineTo(U.clamp(x2, 0, 1) * (m.widthPixels - 1), U.clamp(y2, 0, 1) * (m.heightPixels - 1));
+            p.moveTo(ax, ay);
+            if (ax != bx || ay != by) p.lineTo(bx, by);
+            else p.lineTo(ax + 1, ay); // garisan 1px: sesetengah peranti menolak laluan satu titik
             GestureDescription g = new GestureDescription.Builder()
                     .addStroke(new GestureDescription.StrokeDescription(p, 0, Math.max(1, Math.min(ms, 5000)))).build();
-            return dispatchGesture(g, null, null);
-        } catch (RuntimeException e) {
+            final CountDownLatch done = new CountDownLatch(1);
+            final boolean[] ok = {false};
+            boolean sent = dispatchGesture(g, new GestureResultCallback() {
+                @Override
+                public void onCompleted(GestureDescription d) {
+                    ok[0] = true;
+                    done.countDown();
+                }
+
+                @Override
+                public void onCancelled(GestureDescription d) {
+                    done.countDown();
+                }
+            }, main);
+            if (!sent) return false;
+            if (Looper.myLooper() == Looper.getMainLooper()) return true; // jangan sekat thread utama
+            done.await(ms + 1500, TimeUnit.MILLISECONDS);
+            return ok[0];
+        } catch (RuntimeException | InterruptedException e) {
             return false;
+        }
+    }
+
+    // ---------------------------------------------------------------- mod tetikus
+
+    /** Gerak kursor secara relatif (dx,dy = pecahan lebar/tinggi skrin, seperti trackpad komputer riba). */
+    boolean cursorMove(float dx, float dy) {
+        if (Build.VERSION.SDK_INT < 22) return false;
+        if (Float.isNaN(dx) || Float.isInfinite(dx)) dx = 0;
+        if (Float.isNaN(dy) || Float.isInfinite(dy)) dy = 0;
+        DisplayMetrics m = metrics();
+        if (cx < 0) {
+            cx = m.widthPixels / 2f;
+            cy = m.heightPixels / 2f;
+        }
+        cx = U.clamp(cx + dx * m.widthPixels, 0, m.widthPixels - 1);
+        cy = U.clamp(cy + dy * m.heightPixels, 0, m.heightPixels - 1);
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                showCursor();
+            }
+        });
+        return true;
+    }
+
+    /** Klik di kedudukan kursor. */
+    boolean cursorClick() {
+        if (cx < 0) {
+            cursorMove(0, 0);
+            return true; // klik pertama hanya munculkan kursor di tengah
+        }
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                showCursor();
+            }
+        });
+        return gesture(cx, cy, cx, cy, 60);
+    }
+
+    /** Leret (skrol) bermula di kursor; dx,dy pecahan skrin. */
+    boolean cursorScroll(float dx, float dy) {
+        if (Float.isNaN(dx)) dx = 0;
+        if (Float.isNaN(dy)) dy = 0;
+        DisplayMetrics m = metrics();
+        if (cx < 0) cursorMove(0, 0);
+        float bx = U.clamp(cx + dx * m.widthPixels, 0, m.widthPixels - 1);
+        float by = U.clamp(cy + dy * m.heightPixels, 0, m.heightPixels - 1);
+        return gesture(cx, cy, bx, by, 280);
+    }
+
+    private void showCursor() {
+        try {
+            WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+            int size = Math.round(getResources().getDisplayMetrics().density * 34);
+            if (cursor == null) {
+                cursor = new CursorView(this);
+                cursorLp = new WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        PixelFormat.TRANSLUCENT);
+                cursorLp.gravity = Gravity.TOP | Gravity.START;
+                cursorLp.x = Math.round(cx);
+                cursorLp.y = Math.round(cy);
+                wm.addView(cursor, cursorLp);
+            } else {
+                cursorLp.x = Math.round(cx);
+                cursorLp.y = Math.round(cy);
+                cursor.setVisibility(View.VISIBLE);
+                wm.updateViewLayout(cursor, cursorLp);
+            }
+            main.removeCallbacks(hideCursor);
+            main.postDelayed(hideCursor, 8000);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void removeCursor() {
+        main.removeCallbacks(hideCursor);
+        if (cursor != null) {
+            try {
+                ((WindowManager) getSystemService(Context.WINDOW_SERVICE)).removeView(cursor);
+            } catch (RuntimeException ignored) {
+            }
+            cursor = null;
+        }
+        cx = cy = -1;
+    }
+
+    /** Anak panah tetikus putih dengan bingkai gelap (hujung di penjuru kiri atas = titik klik). */
+    private static final class CursorView extends View {
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), edge = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path arrow = new Path();
+
+        CursorView(Context c) {
+            super(c);
+            fill.setColor(0xFFFFFFFF);
+            edge.setColor(0xE6000000);
+            edge.setStyle(Paint.Style.STROKE);
+            edge.setStrokeJoin(Paint.Join.ROUND);
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float u = getWidth() / 24f;
+            edge.setStrokeWidth(1.6f * u);
+            arrow.reset();
+            arrow.moveTo(1.5f * u, 1.5f * u);
+            arrow.lineTo(1.5f * u, 19 * u);
+            arrow.lineTo(6.2f * u, 14.6f * u);
+            arrow.lineTo(9.6f * u, 22 * u);
+            arrow.lineTo(12.6f * u, 20.6f * u);
+            arrow.lineTo(9.3f * u, 13.4f * u);
+            arrow.lineTo(15.5f * u, 13.4f * u);
+            arrow.close();
+            c.drawPath(arrow, fill);
+            c.drawPath(arrow, edge);
         }
     }
 
