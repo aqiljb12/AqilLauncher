@@ -80,6 +80,16 @@ final class SettingsPage extends Page {
                 rebuildKeepFocus();
             }
         });
+        row(col, "Prestasi automatik", "Kesan visual: " + Perf.tierName(a) + "  •  Tunneling video: " + Perf.tunnelName(a)
+                + "  •  dilaras sendiri ikut keupayaan TV", "Kesan semula", new Runnable() {
+            @Override
+            public void run() {
+                Perf.reset(a);
+                a.reloadWallpaper();
+                Toast.makeText(a, "Prestasi TV dikesan semula: " + Perf.tierName(a), Toast.LENGTH_LONG).show();
+                rebuildKeepFocus();
+            }
+        });
         String[] place = Store.weatherPlace(a);
         row(col, "Cuaca", (place != null ? place[0] : (Weather.place.isEmpty() ? "Lokasi automatik (IP)" : Weather.place + " (auto)"))
                 + "  •  tukar bandar dari telefon", Weather.tempText(), new Runnable() {

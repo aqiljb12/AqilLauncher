@@ -32,6 +32,14 @@ final class Streams {
     private Streams() {}
 
     static ExoPlayer player(Context c, boolean preview) {
+        return player(c, preview, false);
+    }
+
+    /**
+     * @param tunnel tunneling video: bingkai dihantar terus dari dekoder ke paparan oleh cip TV (kurang kerja CPU,
+     *               audio-video lebih sekata). ExoPlayer hanya mengaktifkannya jika dekoder audio & video menyokong.
+     */
+    static ExoPlayer player(Context c, boolean preview, boolean tunnel) {
         DefaultRenderersFactory rf = new DefaultRenderersFactory(c)
                 .setEnableDecoderFallback(true)
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
@@ -50,6 +58,7 @@ final class Streams {
         DefaultTrackSelector.Parameters.Builder pb = ts.buildUponParameters();
         if (preview) pb.setMaxVideoSizeSd();
         else if (Store.maxQuality(c)) pb.setForceHighestSupportedBitrate(true);
+        if (tunnel && !preview) pb.setTunnelingEnabled(true);
         ts.setParameters(pb);
         // anggaran lebar jalur awal tinggi supaya mod Auto pun terus pilih HD, bukan mula dari kualiti terendah
         DefaultBandwidthMeter bw = new DefaultBandwidthMeter.Builder(c).setInitialBitrateEstimate(preview ? 2_000_000L : 20_000_000L).build();

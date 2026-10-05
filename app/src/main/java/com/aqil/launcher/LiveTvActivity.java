@@ -8,6 +8,7 @@ import android.view.Display;
 import android.view.WindowManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.SurfaceView;
@@ -28,6 +29,7 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.DecoderCounters;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
 
@@ -99,6 +101,7 @@ public class LiveTvActivity extends BaseActivity {
                 skips = 0;
                 retries = 0;
                 resyncs = 0;
+                if (tunnelOn && firstFrame) Perf.tunnelOk(LiveTvActivity.this);
             }
         }
     };
@@ -107,6 +110,103 @@ public class LiveTvActivity extends BaseActivity {
     private volatile int frameCount;
     private volatile boolean fpsDone;
     private int savedModeId = -1;
+
+    // ---- tunneling automatik: dicuba jika cip TV menyokong; jika tiada gambar / gambar beku / ralat dekoder,
+    //      pemain dibina semula dalam mod biasa dan TV ini diingati sebagai tidak serasi.
+    private boolean tunnelOn, tunnelOff, firstFrame;
+    private int playTicks, frozenTicks, lastFrames = -1, probeFrames = -1;
+    private long probeAt;
+
+    private final Runnable tunnelCheck = new Runnable() {
+        @Override
+        public void run() {
+            if (!started || player == null || !tunnelOn) return;
+            if (player.getPlaybackState() == Player.STATE_READY && player.isPlaying() && player.getVideoFormat() != null) {
+                playTicks++;
+                int f = frames();
+                if (!firstFrame) {
+                    if (playTicks >= 3) { // ~6 saat main tanpa sebarang gambar
+                        tunnelFallback();
+                        return;
+                    }
+                } else if (f >= 0) {
+                    frozenTicks = f == lastFrames ? frozenTicks + 1 : 0;
+                    lastFrames = f;
+                    if (frozenTicks >= 4) { // gambar beku ~8 saat walaupun siaran berjalan
+                        tunnelFallback();
+                        return;
+                    }
+                }
+            } else {
+                frozenTicks = 0;
+            }
+            h.postDelayed(this, 2000);
+        }
+    };
+
+    /**
+     * Kesan fps dari bilangan bingkai dekoder dalam ~3 saat – sandaran bila cap masa bingkai tidak tersedia
+     * (mod tunneling: bingkai dipapar terus oleh cip, bukan oleh apl).
+     */
+    private final Runnable fpsProbe = new Runnable() {
+        @Override
+        public void run() {
+            if (!started || player == null || fpsDone || player.getPlaybackState() != Player.STATE_READY || !player.isPlaying()) {
+                probeFrames = -1;
+                return;
+            }
+            int f = frames();
+            if (f < 0) return;
+            long now = SystemClock.elapsedRealtime();
+            if (probeFrames < 0 || f < probeFrames) {
+                probeFrames = f;
+                probeAt = now;
+                h.postDelayed(this, 3000);
+                return;
+            }
+            long dt = now - probeAt;
+            int df = f - probeFrames;
+            probeFrames = -1;
+            if (dt < 2000 || df < 20) return;
+            fpsDone = true;
+            matchRefreshRate(snapFps(df * 1000f / dt / Math.max(0.5f, player.getPlaybackParameters().speed)));
+        }
+    };
+
+    private int frames() {
+        DecoderCounters dc = player == null ? null : player.getVideoDecoderCounters();
+        if (dc == null) return -1;
+        dc.ensureUpdated();
+        return dc.renderedOutputBufferCount + dc.skippedOutputBufferCount + dc.droppedBufferCount;
+    }
+
+    private static float snapFps(float f) {
+        float best = -1, err = 1f;
+        for (float std : new float[]{23.976f, 24f, 25f, 29.97f, 30f, 48f, 50f, 59.94f, 60f}) {
+            float e = Math.abs(f - std) / std;
+            if (e < err) {
+                err = e;
+                best = std;
+            }
+        }
+        return err <= 0.06f ? best : -1;
+    }
+
+    private void tunnelFallback() {
+        Perf.tunnelFailed(this);
+        tunnelOff = true; // sesi ini terus guna mod biasa
+        h.removeCallbacks(tunnelCheck);
+        h.removeCallbacks(fpsProbe);
+        h.removeCallbacks(stable);
+        if (player != null) {
+            player.release();
+            player = null;
+        }
+        frameCount = 0;
+        createPlayer();
+        if (started && index >= 0 && index < Hub.channels.size())
+            play(Hub.channels.get(index), triedHls ? MimeTypes.APPLICATION_M3U8 : null);
+    }
 
     private final Runnable statsTick = new Runnable() {
         @Override
@@ -277,7 +377,8 @@ public class LiveTvActivity extends BaseActivity {
     }
 
     private void createPlayer() {
-        player = Streams.player(this, false);
+        tunnelOn = !tunnelOff && Perf.tunnel(this);
+        player = Streams.player(this, false, tunnelOn);
         player.setVideoSurfaceView(surface);
         player.setVideoFrameMetadataListener(new VideoFrameMetadataListener() {
             @Override
@@ -314,6 +415,13 @@ public class LiveTvActivity extends BaseActivity {
                 }
                 if (state == Player.STATE_READY) {
                     status.setText("");
+                    probeFrames = -1;
+                    h.removeCallbacks(fpsProbe);
+                    h.postDelayed(fpsProbe, 1500);
+                    if (tunnelOn) {
+                        h.removeCallbacks(tunnelCheck);
+                        h.postDelayed(tunnelCheck, 2000);
+                    }
                     if (index >= 0 && index < Hub.channels.size()) Hub.channels.get(index).alive = true;
                     // Pembilang gagal direset hanya selepas saluran main lancar STABLE_MS, supaya siaran yang
                     // "READY sekejap lalu mati" tidak boleh menyebabkan kitaran langkau/cuba semula tanpa henti.
@@ -334,6 +442,11 @@ public class LiveTvActivity extends BaseActivity {
                     resLabel.setText(hgt >= 2000 ? " 4K " : hgt >= 1000 ? " FHD " + hgt + "p " : hgt >= 700 ? " HD " + hgt + "p " : " SD " + hgt + "p ");
                     resLabel.setVisibility(View.VISIBLE);
                 }
+            }
+
+            @Override
+            public void onRenderedFirstFrame() {
+                firstFrame = true;
             }
 
             @Override
@@ -516,6 +629,10 @@ public class LiveTvActivity extends BaseActivity {
 
     private void play(Channel c, String forceMime) {
         if (!started || player == null) return; // onStart() akan mainkan semula
+        firstFrame = false;
+        playTicks = 0;
+        frozenTicks = 0;
+        lastFrames = -1;
         try {
             player.setMediaSource(Streams.source(this, c, forceMime));
             player.prepare();
@@ -532,6 +649,16 @@ public class LiveTvActivity extends BaseActivity {
         final Channel c = Hub.channels.get(index);
         final int failed = index;
         h.removeCallbacks(stable);
+        // ralat dekoder / audio (kod 4xxx–5xxx) semasa tunneling: cuba mod biasa dulu, bukan salah saluran
+        if (tunnelOn && e.errorCode >= 4000 && e.errorCode < 6000) {
+            h.post(new Runnable() { // jangan lepaskan pemain dari dalam panggilan baliknya sendiri
+                @Override
+                public void run() {
+                    if (started && tunnelOn) tunnelFallback();
+                }
+            });
+            return;
+        }
         if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && resyncs < MAX_RESYNCS) {
             resyncs++;
             player.seekToDefaultPosition();

@@ -53,7 +53,7 @@ final class Hero extends Card {
         bg.setScaleType(ImageView.ScaleType.CENTER_CROP);
         stage.addView(bg, new LayoutParams(-1, -1));
         // Ken Burns: latar banner zum & gerak perlahan tanpa henti (animasi GPU)
-        if (Store.fx(c)) {
+        if (Perf.rich(c)) {
             android.animation.ObjectAnimator kb = android.animation.ObjectAnimator.ofPropertyValuesHolder(bg,
                     android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.14f),
                     android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.14f),

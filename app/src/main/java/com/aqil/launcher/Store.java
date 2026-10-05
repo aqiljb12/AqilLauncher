@@ -183,6 +183,39 @@ final class Store {
         p(c).edit().putBoolean("matchFps", on).apply();
     }
 
+    // ---- prestasi automatik (Perf): had tahap & keputusan ujian tunneling, ditetapkan semula setiap versi baharu ----
+
+    static int perfCap(Context c) {
+        return p(c).getInt("perfCap", -1);
+    }
+
+    static void setPerfCap(Context c, int cap) {
+        p(c).edit().putInt("perfCap", cap).apply();
+    }
+
+    /** 1 = disahkan berfungsi, 0 = dalam percubaan, -1 = tidak serasi pada TV ini. */
+    static int tunnel(Context c) {
+        return p(c).getInt("tun", 0);
+    }
+
+    static void setTunnel(Context c, int state) {
+        p(c).edit().putInt("tun", state).apply();
+    }
+
+    static int tunnelOks(Context c) {
+        return p(c).getInt("tunOk", 0);
+    }
+
+    static void setTunnelOks(Context c, int n) {
+        p(c).edit().putInt("tunOk", n).apply();
+    }
+
+    /** Tetapkan semula hasil pengesanan bila versi apl berubah (versi baharu mungkin lebih ringan / dibaiki). */
+    static void perfVersion(Context c, int ver) {
+        if (p(c).getInt("perfVer", -1) == ver) return;
+        p(c).edit().putInt("perfVer", ver).remove("perfCap").remove("tun").remove("tunOk").apply();
+    }
+
     /** Format strim akaun Xtream: "ts" (lalai) atau "m3u8" (HLS). */
     static String xtFormat(Context c) {
         return p(c).getString("xtFmt", "ts");

@@ -37,7 +37,8 @@ public class MainActivity extends BaseActivity {
     private int ambientColor;
     private final String[] order = {"home", "apps", "live", "movies", "remote", "settings"};
     private Weather.Icon wicon;
-    private boolean receiverOn, dirty;
+    private boolean receiverOn, dirty, stopped;
+    private Object perfWatch;
 
     private final BroadcastReceiver pkgReceiver = new BroadcastReceiver() {
         @Override
@@ -189,9 +190,41 @@ public class MainActivity extends BaseActivity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        stopped = false;
+        updateHold();
+    }
+
+    @Override
+    protected void onStop() {
+        stopped = true;
+        updateHold(); // lepaskan dekoder wallpaper video semasa Live TV / apl lain di depan
+        super.onStop();
+    }
+
+    /** Wallpaper berhenti (video dilepas) di halaman berat & bila launcher tidak kelihatan. */
+    private void updateHold() {
+        wall.setHold(stopped || "live".equals(current) || "movies".equals(current));
+    }
+
+    /** Senarai saluran ditukar (kemas kini latar): halaman yang memaparkan saluran dibina semula. */
+    void channelsChanged() {
+        if ("home".equals(current) || "live".equals(current)) refreshCurrent();
+    }
+
+    /** Pemantau prestasi menurunkan tahap kesan visual: bina semula wallpaper serta-merta. */
+    void perfChanged() {
+        reloadWallpaper();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         wall.resume();
+        perfWatch = Perf.watch(this);
+        Hub.applyPending(); // senarai saluran baharu dari kemas kini latar
+        Hub.refreshIfStale();
         if (!receiverOn) {
             IntentFilter f = new IntentFilter();
             f.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -215,6 +248,8 @@ public class MainActivity extends BaseActivity {
 
     @Override
     protected void onPause() {
+        Perf.unwatch(this, perfWatch);
+        perfWatch = null;
         wall.pause();
         Page p = current == null ? null : pages.get(current);
         if (p != null) p.onPause();
@@ -236,8 +271,6 @@ public class MainActivity extends BaseActivity {
     void reloadWallpaper() {
         wall.reset();
         wall.apply(Store.wallpaper(this));
-        if (Store.fx(this)) wall.resume();
-        else wall.pause();
     }
 
     @Override
@@ -248,7 +281,7 @@ public class MainActivity extends BaseActivity {
     /** Latar berubah warna lembut mengikut apl/saluran yang difokus. */
     @Override
     void ambient(int color) {
-        if (!Store.fx(this)) return;
+        if (!Perf.motion(this)) return;
         int target = color == 0 ? 0 : (color & 0xFFFFFF) | 0x5A000000;
         if (target == ambientColor) return;
         android.animation.ValueAnimator va = android.animation.ValueAnimator.ofArgb(ambientColor, target);
@@ -288,13 +321,14 @@ public class MainActivity extends BaseActivity {
             old.onHide();
         }
         current = name;
+        updateHold();
         Page p = page(name);
         p.build();
         host.removeAllViews();
         host.addView(p.root, new FrameLayout.LayoutParams(-1, -1));
         p.root.setAlpha(0f);
         p.root.setTranslationY(S.px(40));
-        p.root.setRotationX(Store.fx(this) ? 6f : 0f);
+        p.root.setRotationX(Perf.tilt(this) ? 6f : 0f);
         p.root.animate().alpha(1f).translationY(0).rotationX(0).setDuration(360).setInterpolator(new DecelerateInterpolator()).start();
         for (Map.Entry<String, NavItem[]> e : navs.entrySet()) {
             for (NavItem n : e.getValue()) n.setActive(e.getKey().equals(name));

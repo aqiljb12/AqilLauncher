@@ -57,43 +57,137 @@ final class Hub {
         void run(int count, String error);
     }
 
-    /** Muat turun (atau guna cache) senarai M3U di thread lain; panggil balik di thread utama. */
+    private static final Object LOCK = new Object();
+    private static final long STALE_MS = 12 * 3600_000L;
+    /** Senarai baharu dari kemas kini latar, menunggu masa selamat untuk ditukar (bukan semasa menonton). */
+    private static volatile List<Channel> pending;
+    private static volatile boolean refreshing;
+    private static volatile long lastRefreshTry;
+
+    /**
+     * Muat senarai saluran di thread lain; panggil balik di thread utama.
+     * force=false: guna senarai yang sudah ada / cache storan (serta-merta), kemudian kemas kini di latar jika
+     * cache sudah lebih 12 jam. force=true: muat turun semula sekarang (butang "Muat semula", tukar akaun).
+     */
     static void loadChannels(final boolean force, final Done done) {
+        if (!force && !channels.isEmpty()) {
+            finish(done, null);
+            return;
+        }
         new Thread(new Runnable() {
             @Override
             public void run() {
-                String err = null;
-                if (Store.xtream(app) != null) {
-                    // akaun Xtream Codes: saluran dari API panel
-                    List<Channel> merged = new ArrayList<>(freeChannels(force || channels.isEmpty()));
-                    try {
-                        List<Channel> l = Xtream.loadLive(app, force || channels.isEmpty());
-                        if (l != null) merged.addAll(l);
-                    } catch (Exception e) {
-                        err = e.getMessage() == null ? e.toString() : e.getMessage();
-                    }
-                    if (!merged.isEmpty()) channels = merged;
-                    finish(done, err);
-                    return;
-                }
-                File cache = new File(app.getFilesDir(), "playlist.m3u");
-                if (force || !cache.exists() || channels.isEmpty()) {
-                    try {
-                        download(Store.playlist(app), cache);
-                    } catch (Exception e) {
-                        err = e.getMessage() == null ? e.toString() : e.getMessage();
+                String[] err = new String[1];
+                synchronized (LOCK) {
+                    if (force || channels.isEmpty()) { // mungkin sudah dimuat oleh panggilan lain semasa menunggu
+                        List<Channel> l = build(force, err);
+                        if (!l.isEmpty()) {
+                            channels = l;
+                            pending = null;
+                        }
                     }
                 }
-                if (channels.isEmpty() || force) {
-                    try {
-                        if (cache.exists()) channels = parse(cache);
-                    } catch (Exception e) {
-                        err = e.toString();
-                    }
-                }
-                finish(done, err);
+                finish(done, err[0]);
+                if (!force) refreshIfStale();
             }
         }, "playlist").start();
+    }
+
+    private static List<Channel> build(boolean refresh, String[] err) {
+        if (Store.xtream(app) != null) {
+            // akaun Xtream Codes: saluran percuma + saluran dari API panel
+            List<Channel> merged = new ArrayList<>(freeChannels(refresh));
+            try {
+                List<Channel> l = Xtream.loadLive(app, refresh);
+                if (l != null) merged.addAll(l);
+            } catch (Exception e) {
+                err[0] = msg(e);
+            }
+            return merged;
+        }
+        File cache = new File(app.getFilesDir(), "playlist.m3u");
+        if (refresh || !cache.exists()) {
+            try {
+                download(Store.playlist(app), cache);
+            } catch (Exception e) {
+                err[0] = msg(e);
+            }
+        }
+        try {
+            if (cache.exists()) return parse(cache);
+        } catch (Exception e) {
+            err[0] = e.toString();
+        }
+        return new ArrayList<>();
+    }
+
+    private static String msg(Exception e) {
+        return e.getMessage() == null ? e.toString() : e.getMessage();
+    }
+
+    /** Cache senarai lebih 12 jam → muat turun di latar tanpa ganggu paparan (cuba paling kerap 30 minit sekali). */
+    static void refreshIfStale() {
+        if (refreshing || channels.isEmpty() || app == null) return;
+        long now = System.currentTimeMillis();
+        if (now - lastRefreshTry < 30 * 60_000L) return;
+        File f = new File(app.getFilesDir(), Store.xtream(app) != null ? "xtream.json" : "playlist.m3u");
+        if (f.exists() && now - f.lastModified() < STALE_MS) return;
+        refreshing = true;
+        lastRefreshTry = now;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final List<Channel> l;
+                    String[] err = new String[1];
+                    synchronized (LOCK) {
+                        l = build(true, err);
+                    }
+                    if (err[0] == null && !l.isEmpty() && sig(l) != sig(channels)) {
+                        main.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                pending = l;
+                                applyPending();
+                            }
+                        });
+                    }
+                } finally {
+                    refreshing = false;
+                }
+            }
+        }, "playlist-bg").start();
+    }
+
+    /**
+     * Pasang senarai dari kemas kini latar hanya bila launcher di depan dan tiada siaran dibuka (nombor saluran
+     * berubah). Saluran terakhir dipetakan semula ikut URL supaya "Saluran terakhir" kekal betul.
+     */
+    static void applyPending() {
+        List<Channel> l = pending;
+        if (l == null) return;
+        BaseActivity t = top();
+        if (playing >= 0 || !(t instanceof MainActivity)) return;
+        pending = null;
+        List<Channel> old = channels;
+        int last = Store.lastChannel(app);
+        if (last >= 0 && last < old.size()) {
+            String url = old.get(last).url;
+            for (int i = 0; i < l.size(); i++) {
+                if (l.get(i).url.equals(url)) {
+                    Store.setLastChannel(app, i);
+                    break;
+                }
+            }
+        }
+        channels = l;
+        ((MainActivity) t).channelsChanged();
+    }
+
+    private static long sig(List<Channel> l) {
+        long h = l.size();
+        for (Channel c : l) h = h * 31 + c.url.hashCode() * 17L + (c.name == null ? 0 : c.name.hashCode());
+        return h;
     }
 
     /**

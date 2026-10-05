@@ -6,12 +6,15 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.Shader;
 import android.graphics.SurfaceTexture;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.view.Surface;
 import android.view.TextureView;
@@ -41,6 +44,8 @@ final class WallpaperView extends FrameLayout {
     private String lastSpec;
     private String spec = "";
     private boolean paused;
+    /** Ditahan: halaman berat (Live TV / Filem) dipaparkan atau launcher tersembunyi → tiada animasi, video dilepas. */
+    private boolean held;
     private int videoW, videoH;
 
     WallpaperView(Context c) {
@@ -102,10 +107,18 @@ final class WallpaperView extends FrameLayout {
         return b;
     }
 
+    private static final float[][] POS = {{-0.15f, -0.25f}, {0.45f, -0.1f}, {0.05f, 0.35f}, {0.55f, 0.4f}};
+
     private void live(int top, int bottom, int[] colors) {
+        if (!Perf.motion(getContext())) {
+            staticLive(top, bottom, colors);
+            return;
+        }
         layer.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{top, bottom}));
-        float[][] pos = {{-0.15f, -0.25f}, {0.45f, -0.1f}, {0.05f, 0.35f}, {0.55f, 0.4f}};
+        float[][] pos = POS;
+        boolean lite = Perf.tier(getContext()) < Perf.HIGH;
         for (int i = 0; i < colors.length; i++) {
+            if (lite && (i == 1 || i == 2)) continue; // tahap Sederhana: 2 gumpalan (separuh kerja GPU)
             ImageView v = new ImageView(getContext());
             v.setImageBitmap(blob(colors[i]));
             v.setScaleType(ImageView.ScaleType.FIT_XY);
@@ -125,7 +138,34 @@ final class WallpaperView extends FrameLayout {
             a.setRepeatMode(ValueAnimator.REVERSE);
             a.setInterpolator(new AccelerateDecelerateInterpolator());
             anims.add(a);
-            if (Store.fx(getContext()) && !paused) a.start();
+        }
+        sync();
+    }
+
+    /**
+     * Tahap Ringan / animasi mati: lukis gradien + gumpalan SEKALI ke bitmap kecil (1/3 resolusi – gradien lembut
+     * tidak nampak beza) dan papar sebagai satu imej legap. Tiada adunan alfa berlapis setiap bingkai.
+     */
+    private void staticLive(int top, int bottom, int[] colors) {
+        int bw = Math.max(320, S.w / 3), bh = Math.max(180, S.h / 3);
+        try {
+            Bitmap b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+            Canvas cv = new Canvas(b);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setShader(new LinearGradient(0, 0, bw, bh, top, bottom, Shader.TileMode.CLAMP));
+            cv.drawRect(0, 0, bw, bh, p);
+            for (int i = 0; i < colors.length && i < POS.length; i++) {
+                float size = bw * (0.62f + 0.08f * i), r = size / 2f;
+                float cx = bw * POS[i][0] + r, cy = bh * POS[i][1] + r; // sama seperti susun atur gumpalan bergerak
+                p.setShader(new RadialGradient(cx, cy, r, new int[]{(colors[i] & 0xFFFFFF) | 0xB0000000,
+                        (colors[i] & 0xFFFFFF) | 0x40000000, colors[i] & 0xFFFFFF}, new float[]{0f, 0.5f, 1f}, Shader.TileMode.CLAMP));
+                cv.drawCircle(cx, cy, r, p);
+            }
+            BitmapDrawable d = new BitmapDrawable(getResources(), b);
+            d.setFilterBitmap(true);
+            layer.setBackground(d);
+        } catch (Throwable e) {
+            layer.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{top, bottom}));
         }
     }
 
@@ -166,6 +206,10 @@ final class WallpaperView extends FrameLayout {
             apply("aurora");
             return;
         }
+        if (held) {
+            posterFrame(f);
+            return;
+        }
         tex = new TextureView(getContext());
         final TextureView myTex = tex;
         tex.setAlpha(0f);
@@ -194,8 +238,13 @@ final class WallpaperView extends FrameLayout {
                         @Override
                         public void onPrepared(MediaPlayer m) {
                             if (m != mp) return;
-                            if (!paused) m.start();
-                            myTex.animate().alpha(1f).setDuration(600).start();
+                            if (!paused && !held) m.start();
+                            myTex.animate().alpha(1f).setDuration(600).withEndAction(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (tex == myTex) dropSnaps(); // bingkai pegun di bawah tidak diperlukan lagi
+                                }
+                            }).start();
                         }
                     });
                     mp.setOnErrorListener(new MediaPlayer.OnErrorListener() {
@@ -284,28 +333,114 @@ final class WallpaperView extends FrameLayout {
 
     void pause() {
         paused = true;
-        for (ObjectAnimator a : anims) a.pause();
-        if (mp != null && mp.isPlaying()) mp.pause();
+        sync();
     }
 
     void resume() {
         paused = false;
-        boolean fx = Store.fx(getContext());
+        sync();
+    }
+
+    /**
+     * Tahan wallpaper semasa halaman berat dipaparkan atau launcher tersembunyi (Live TV skrin penuh, apl lain).
+     * Wallpaper video DILEPASKAN (bukan dijeda) supaya dekoder perkakasan bebas untuk siaran – banyak TV box
+     * hanya ada 1–2 dekoder; jika dipegang wallpaper, Live TV terpaksa guna dekoder perisian yang perlahan.
+     * Bingkai terakhir dipaparkan sebagai gambar pegun supaya tiada kelipan.
+     */
+    void setHold(boolean h) {
+        if (h == held) return;
+        held = h;
+        if (h) freezeVideo();
+        else if ("video".equals(spec) && tex == null) video(Hub.videoWallpaperFile());
+        sync();
+    }
+
+    private void sync() {
+        boolean run = !paused && !held && Perf.motion(getContext());
         for (ObjectAnimator a : anims) {
-            if (!fx) a.cancel();
-            else if (a.isPaused()) a.resume();
-            else if (!a.isStarted()) a.start();
+            if (run) {
+                if (a.isPaused()) a.resume();
+                else if (!a.isStarted()) a.start();
+            } else if (a.isStarted()) {
+                a.pause();
+            }
         }
         if (mp != null) {
             try {
-                mp.start();
+                if (paused || held) {
+                    if (mp.isPlaying()) mp.pause();
+                } else if (!mp.isPlaying()) {
+                    mp.start();
+                }
             } catch (Exception ignored) {
             }
         }
     }
 
+    private void freezeVideo() {
+        if (tex == null && mp == null) return;
+        Bitmap b = null;
+        try {
+            // getBitmap() abaikan transform crop → minta bitmap ikut nisbah video, kemudian CENTER_CROP
+            if (tex != null && tex.isAvailable() && videoW > 0 && videoH > 0) {
+                int bw = Math.min(960, videoW);
+                b = tex.getBitmap(bw, Math.max(1, bw * videoH / videoW));
+            }
+        } catch (Throwable ignored) {
+        }
+        releasePlayer();
+        if (tex != null) {
+            layer.removeView(tex);
+            tex = null;
+        }
+        if (b != null) addSnap(b);
+    }
+
+    /** Bingkai pertama video sebagai gambar pegun (bila wallpaper dipasang semasa ditahan). */
+    private void posterFrame(final File f) {
+        final String mySpec = spec;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Bitmap b = null;
+                MediaMetadataRetriever r = new MediaMetadataRetriever();
+                try {
+                    r.setDataSource(f.getPath());
+                    b = r.getFrameAtTime(0);
+                } catch (Throwable ignored) {
+                } finally {
+                    try {
+                        r.release();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                final Bitmap fb = b;
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (fb != null && mySpec.equals(spec) && tex == null) addSnap(fb);
+                    }
+                });
+            }
+        }, "wall-frame").start();
+    }
+
+    private void addSnap(Bitmap b) {
+        ImageView snap = new ImageView(getContext());
+        snap.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        snap.setImageBitmap(b);
+        snap.setTag("snap");
+        layer.addView(snap, 0, new LayoutParams(-1, -1));
+    }
+
+    private void dropSnaps() {
+        for (int i = layer.getChildCount() - 1; i >= 0; i--) {
+            if ("snap".equals(layer.getChildAt(i).getTag())) layer.removeViewAt(i);
+        }
+    }
+
     void parallax(float nx, float ny) {
-        if (!Store.fx(getContext())) return;
+        if (!Perf.motion(getContext()) || held) return;
         layer.animate().translationX(-nx * S.px(36)).translationY(-ny * S.px(22)).setDuration(900).start();
     }
 

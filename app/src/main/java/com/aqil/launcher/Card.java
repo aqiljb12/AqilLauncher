@@ -1,11 +1,13 @@
 package com.aqil.launcher;
 
 import android.content.Context;
+import android.graphics.Outline;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.OvershootInterpolator;
 import android.widget.FrameLayout;
@@ -39,6 +41,15 @@ class Card extends FrameLayout {
         return flat ? 0 : S.px(22);
     }
 
+    /** Bentuk bulat dikekalkan untuk keratan, tetapi alfa 0 → GPU tidak lukis bayang (tahap Ringan). */
+    private static final ViewOutlineProvider NO_SHADOW = new ViewOutlineProvider() {
+        @Override
+        public void getOutline(View v, Outline o) {
+            ViewOutlineProvider.BACKGROUND.getOutline(v, o);
+            o.setAlpha(0f);
+        }
+    };
+
     Card(Context c, float radius) {
         this(c, radius, Ui.glass(S.px(radius)));
     }
@@ -49,7 +60,9 @@ class Card extends FrameLayout {
         setClickable(true);
         setBackground(bg);
         setClipToOutline(true);
-        setElevation(S.px(3));
+        // Bayang setiap kad dilukis semula setiap bingkai; hanya tahap Tinggi guna bayang pada semua kad
+        setElevation(Perf.rich(c) ? S.px(3) : 0);
+        if (!Perf.shadows(c)) setOutlineProvider(NO_SHADOW);
         setCameraDistance(getResources().getDisplayMetrics().density * 6000);
         if (Build.VERSION.SDK_INT >= 28) {
             setOutlineSpotShadowColor(0xFF2E8BFF);
@@ -108,7 +121,7 @@ class Card extends FrameLayout {
     void animateFocus(boolean gained) {
         animate().cancel();
         if (gained) {
-            if (Store.fx(getContext())) {
+            if (Perf.tilt(getContext())) {
                 int dir = BaseActivity.lastDir;
                 setRotationY(dir == View.FOCUS_RIGHT ? -14f : dir == View.FOCUS_LEFT ? 14f : 0f);
                 setRotationX(dir == View.FOCUS_DOWN ? 12f : dir == View.FOCUS_UP ? -12f : 0f);
@@ -116,7 +129,7 @@ class Card extends FrameLayout {
             animate().scaleX(scaleTo).scaleY(scaleTo).translationZ(liftZ()).rotationX(0).rotationY(0)
                     .setDuration(340).setInterpolator(new OvershootInterpolator(1.3f)).start();
             ring.animate().alpha(1f).setDuration(150).start();
-            if (Store.fx(getContext()) && getWidth() > 0) {
+            if (Perf.rich(getContext()) && getWidth() > 0) {
                 shine.animate().cancel();
                 shine.setTranslationX(-getWidth());
                 shine.setAlpha(1f);
