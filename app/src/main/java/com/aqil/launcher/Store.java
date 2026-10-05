@@ -200,6 +200,39 @@ final class Store {
         p(c).edit().putBoolean("autoSkip", on).apply();
     }
 
+    // ---- Filem & Siri: kedudukan sambung tonton + sejarah ----
+
+    static long vodPos(Context c, String url) {
+        return p(c).getLong("pos_" + Integer.toHexString(url.hashCode()), 0);
+    }
+
+    /** Simpan kedudukan & tambah ke "Sambung tonton" (paling baru dulu, maks 20). */
+    static void saveVod(Context c, String title, String url, String icon, long pos, long dur) {
+        boolean finished = dur > 0 && pos > dur - 90_000; // hampir habis = selesai
+        p(c).edit().putLong("pos_" + Integer.toHexString(url.hashCode()), finished ? 0 : pos).apply();
+        try {
+            org.json.JSONArray old = vodHistoryRaw(c), out = new org.json.JSONArray();
+            if (!finished && pos > 30_000) {
+                out.put(new org.json.JSONObject().put("title", title).put("url", url).put("icon", icon == null ? "" : icon)
+                        .put("pos", pos).put("dur", dur).put("t", System.currentTimeMillis()));
+            }
+            for (int i = 0; i < old.length() && out.length() < 20; i++) {
+                org.json.JSONObject o = old.optJSONObject(i);
+                if (o != null && !url.equals(o.optString("url"))) out.put(o);
+            }
+            p(c).edit().putString("vodHist", out.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    static org.json.JSONArray vodHistoryRaw(Context c) {
+        try {
+            return new org.json.JSONArray(p(c).getString("vodHist", "[]"));
+        } catch (Exception e) {
+            return new org.json.JSONArray(); // data rosak: abaikan
+        }
+    }
+
     // ---- pairing ----
 
     static synchronized String pin(Context c) {

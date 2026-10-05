@@ -35,7 +35,7 @@ public class MainActivity extends BaseActivity {
     private TextView temp, place;
     private View ambientView, indicator;
     private int ambientColor;
-    private final String[] order = {"home", "apps", "live", "remote", "settings"};
+    private final String[] order = {"home", "apps", "live", "movies", "remote", "settings"};
     private Weather.Icon wicon;
     private boolean receiverOn, dirty;
 
@@ -121,15 +121,15 @@ public class MainActivity extends BaseActivity {
         side.setPadding(S.px(10), S.px(12), S.px(10), S.px(12));
         Ui.noClip(side);
         sideBox.addView(side, new FrameLayout.LayoutParams(-1, -2));
-        root.addView(sideBox, Ui.at(40, 236, 136, 5 * 118 + 18));
+        root.addView(sideBox, Ui.at(40, 214, 136, 6 * 118 + 18));
 
         // ---- halaman
         host = new FrameLayout(this);
         Ui.noClip(host);
         root.addView(host, Ui.at(214, 186, 1666, 864));
 
-        String[] labels = {"Home", "Apl", "Live TV", "Remote", "Tetapan"};
-        int[] icons = {R.drawable.ic_home, R.drawable.ic_apps, R.drawable.ic_livetv, R.drawable.ic_gamepad, R.drawable.ic_settings};
+        String[] labels = {"Home", "Apl", "Live TV", "Filem", "Remote", "Tetapan"};
+        int[] icons = {R.drawable.ic_home, R.drawable.ic_apps, R.drawable.ic_livetv, R.drawable.ic_movie, R.drawable.ic_gamepad, R.drawable.ic_settings};
         for (int i = 0; i < order.length; i++) {
             final NavItem n = new NavItem(this, order[i], icons[i], labels[i], 30);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(S.px(116), S.px(112));
@@ -271,6 +271,7 @@ public class MainActivity extends BaseActivity {
             switch (name) {
                 case "apps": p = new AppsPage(this); break;
                 case "live": p = new LivePage(this); break;
+                case "movies": p = new MoviesPage(this); break;
                 case "remote": p = new RemotePage(this); break;
                 case "settings": p = new SettingsPage(this); break;
                 default: p = new HomePage(this); break;
@@ -495,6 +496,8 @@ public class MainActivity extends BaseActivity {
 
     @Override
     public void onBackPressed() {
+        Page cur = current == null ? null : pages.get(current);
+        if (cur != null && cur.onBack()) return; // cth. tutup butiran filem dahulu
         if (!"home".equals(current)) {
             showPage("home");
         }

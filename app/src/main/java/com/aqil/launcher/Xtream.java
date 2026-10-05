@@ -44,7 +44,7 @@ final class Xtream {
         return s;
     }
 
-    private static String api(String[] x, String action) throws Exception {
+    static String api(String[] x, String action) throws Exception {
         return x[0] + "/player_api.php?username=" + URLEncoder.encode(x[1], "UTF-8")
                 + "&password=" + URLEncoder.encode(x[2], "UTF-8") + (action == null ? "" : "&action=" + action);
     }
@@ -161,7 +161,7 @@ final class Xtream {
 
     /** Satu rancangan dalam jadual EPG. */
     static final class Prog {
-        String title;
+        String title, desc = "";
         long start, end; // ms
 
         String hhmm(long t) {
@@ -186,6 +186,12 @@ final class Xtream {
                     p.title = new String(Base64.decode(p.title, Base64.DEFAULT), "UTF-8").trim();
                 } catch (Exception ignored) {
                 }
+                String d = e.optString("description", "");
+                try {
+                    d = new String(Base64.decode(d, Base64.DEFAULT), "UTF-8").trim();
+                } catch (Exception ignored) {
+                }
+                p.desc = d;
                 p.start = e.optLong("start_timestamp", 0) * 1000;
                 p.end = e.optLong("stop_timestamp", 0) * 1000;
                 if (p.end > 0 && p.end < now) continue; // dah tamat

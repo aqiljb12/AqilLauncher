@@ -52,14 +52,15 @@ final class RemoteControl {
                     return NEED_A11Y;
                 }
             case "playpause":
-                media(am, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE);
-                return null;
             case "ff":
-                media(am, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD);
+            case "rew": {
+                int mc = k.equals("playpause") ? KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                        : k.equals("ff") ? KeyEvent.KEYCODE_MEDIA_FAST_FORWARD : KeyEvent.KEYCODE_MEDIA_REWIND;
+                // pemain launcher sendiri (Filem / Live TV) di depan: hantar terus ke tetingkapnya
+                if (Hub.top() != null && inject(mc)) return null;
+                media(am, mc);
                 return null;
-            case "rew":
-                media(am, KeyEvent.KEYCODE_MEDIA_REWIND);
-                return null;
+            }
             default:
                 break;
         }

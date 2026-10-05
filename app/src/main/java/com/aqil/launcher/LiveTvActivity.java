@@ -620,6 +620,10 @@ public class LiveTvActivity extends BaseActivity {
         boolean panelOpen = panel.getVisibility() == View.VISIBLE;
         int k = e.getKeyCode();
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
+            if (k == KeyEvent.KEYCODE_GUIDE) {
+                startActivity(new Intent(this, GuideActivity.class));
+                return true;
+            }
             if (k >= KeyEvent.KEYCODE_0 && k <= KeyEvent.KEYCODE_9) {
                 digitBuf += (char) ('0' + k - KeyEvent.KEYCODE_0);
                 if (digitBuf.length() > 4) digitBuf = digitBuf.substring(1);

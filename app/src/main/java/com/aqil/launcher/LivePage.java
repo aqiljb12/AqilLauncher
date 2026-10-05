@@ -113,14 +113,22 @@ final class LivePage extends Page {
         LinearLayout acts = new LinearLayout(a);
         acts.setOrientation(LinearLayout.VERTICAL);
         Ui.noClip(acts);
-        Row watch = action(acts, "▶   Tonton saluran terakhir", new Runnable() {
+        pair = null;
+        Row watch = action(acts, "▶  Saluran terakhir", new Runnable() {
             @Override
             public void run() {
                 a.openLive(-1);
             }
         });
+        action(acts, "Panduan TV", new Runnable() {
+            @Override
+            public void run() {
+                releasePreview();
+                a.open(new android.content.Intent(a, GuideActivity.class));
+            }
+        });
         if (Store.xtream(a) != null) {
-            action(acts, "Akaun IPTV: " + (Xtream.status.isEmpty() ? "lihat" : Xtream.status + " • tamat " + Xtream.expiry), new Runnable() {
+            action(acts, "Akaun: " + (Xtream.status.isEmpty() ? "lihat" : Xtream.status), new Runnable() {
                 @Override
                 public void run() {
                     new GlassMenu(a, "Akaun IPTV (Xtream Codes)")
@@ -130,7 +138,7 @@ final class LivePage extends Page {
                             .show();
                 }
             });
-        } else action(acts, "Semak saluran mati", new Runnable() {
+        } else action(acts, "Semak saluran", new Runnable() {
             @Override
             public void run() {
                 Toast.makeText(a, "Menyemak " + Hub.channels.size() + " saluran…", Toast.LENGTH_LONG).show();
@@ -144,7 +152,7 @@ final class LivePage extends Page {
                 });
             }
         });
-        action(acts, onlyAlive ? "Tunjuk semua saluran" : "Hanya saluran berfungsi", new Runnable() {
+        action(acts, onlyAlive ? "Tunjuk semua" : "Hanya berfungsi", new Runnable() {
             @Override
             public void run() {
                 onlyAlive = !onlyAlive;
@@ -152,7 +160,7 @@ final class LivePage extends Page {
                 build();
             }
         });
-        action(acts, "Muat semula senarai", new Runnable() {
+        action(acts, "Muat semula", new Runnable() {
             @Override
             public void run() {
                 loading = true;
@@ -240,18 +248,27 @@ final class LivePage extends Page {
         firstView = firstCard != null ? firstCard : watch;
     }
 
+    /** Baris semasa grid butang 2 lajur (supaya 6 butang muat dalam ruang di bawah pratonton). */
+    private LinearLayout pair;
+
     private Row action(LinearLayout parent, String label, final Runnable r) {
         Row row = new Row(a, label, null, null);
-        row.scaleTo = 1.04f;
+        row.scaleTo = 1.05f;
         row.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 r.run();
             }
         });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, S.px(64));
-        lp.bottomMargin = S.px(12);
-        parent.addView(row, lp);
+        if (pair == null || pair.getChildCount() >= 2) {
+            pair = new FrontLayout(a, LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(-1, S.px(62));
+            pl.bottomMargin = S.px(12);
+            parent.addView(pair, pl);
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
+        if (pair.getChildCount() == 0) lp.rightMargin = S.px(12);
+        pair.addView(row, lp);
         return row;
     }
 

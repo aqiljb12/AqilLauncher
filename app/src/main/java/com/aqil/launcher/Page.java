@@ -26,6 +26,11 @@ abstract class Page {
 
     void onHide() {}
 
+    /** Back ditekan semasa halaman ini dipaparkan: true jika halaman sendiri mengendalikannya. */
+    boolean onBack() {
+        return false;
+    }
+
     void onPause() {}
 
     void onResume() {}
