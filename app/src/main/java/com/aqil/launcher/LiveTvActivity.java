@@ -2,7 +2,10 @@ package com.aqil.launcher;
 
 import android.content.Intent;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.Display;
+import android.view.WindowManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -26,6 +29,7 @@ import androidx.media3.common.Player;
 import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
 
 import java.util.List;
 
@@ -55,7 +59,7 @@ public class LiveTvActivity extends BaseActivity {
     private SurfaceView surface;
     private FrameLayout videoBox, panel, info;
     private ListView list;
-    private TextView infoNum, infoName, infoGroup, status, digits, resLabel, epgNow, epgNext;
+    private TextView infoNum, infoName, infoGroup, status, digits, resLabel, netLabel, epgNow, epgNext;
     private View epgTrack, epgBar;
     private FrameLayout.LayoutParams infoLp;
     private ImageView infoLogo;
@@ -98,6 +102,23 @@ public class LiveTvActivity extends BaseActivity {
             }
         }
     };
+    // ---- anti-gegaran: kesan fps siaran dari cap masa bingkai, kemudian padankan kadar segar skrin
+    private final long[] frameTs = new long[40];
+    private volatile int frameCount;
+    private volatile boolean fpsDone;
+    private int savedModeId = -1;
+
+    private final Runnable statsTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!started || player == null) return;
+            long buf = player.getTotalBufferedDuration() / 1000;
+            long bps = Streams.bitrateEstimate();
+            netLabel.setText("Penimbal " + buf + "s" + (bps > 0 ? "  •  " + String.format(java.util.Locale.ROOT, "%.1f", bps / 1e6) + " Mbps" : ""));
+            if (info.getAlpha() > 0.01f) h.postDelayed(this, 1000);
+        }
+    };
+
     private Channel epgFor;
     private final Runnable epgFetch = new Runnable() {
         @Override
@@ -176,6 +197,9 @@ public class LiveTvActivity extends BaseActivity {
         resLabel.setPadding(S.px(8), S.px(4), S.px(8), S.px(4));
         resLabel.setVisibility(View.GONE);
         info.addView(resLabel, Ui.at(480, 26, -2, -2));
+        // kesihatan strim: saat ditimbal + anggaran kelajuan (bantu kenal pasti punca tersekat)
+        netLabel = Ui.text(this, "", 20, Ui.DIM, Ui.MEDIUM);
+        info.addView(netLabel, Ui.at(640, 30, 230, -2));
         infoName = Ui.text(this, "", 40, Ui.WHITE, Ui.BOLD);
         info.addView(infoName, Ui.at(224, 64, 620, -2));
         infoGroup = Ui.text(this, "", 24, Ui.DIM, Ui.MEDIUM);
@@ -255,6 +279,29 @@ public class LiveTvActivity extends BaseActivity {
     private void createPlayer() {
         player = Streams.player(this, false);
         player.setVideoSurfaceView(surface);
+        player.setVideoFrameMetadataListener(new VideoFrameMetadataListener() {
+            @Override
+            public void onVideoFrameAboutToBeRendered(long presentationTimeUs, long releaseTimeNs,
+                                                      androidx.media3.common.Format format, android.media.MediaFormat mediaFormat) {
+                // dipanggil di thread main balik: kumpul 40 cap masa pertama setiap saluran
+                if (fpsDone) return;
+                int n = frameCount;
+                if (n < frameTs.length) {
+                    frameTs[n] = presentationTimeUs;
+                    frameCount = n + 1;
+                }
+                if (n + 1 == frameTs.length) {
+                    fpsDone = true;
+                    final float fps = estimateFps();
+                    h.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            matchRefreshRate(fps);
+                        }
+                    });
+                }
+            }
+        });
         player.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int state) {
@@ -349,6 +396,72 @@ public class LiveTvActivity extends BaseActivity {
         info.setTranslationY(0);
         h.removeCallbacks(hideInfo);
         h.postDelayed(hideInfo, 4500);
+        h.removeCallbacks(statsTick);
+        h.post(statsTick);
+    }
+
+    /** Median jarak antara bingkai → fps (abaikan lompatan/cap masa pelik). */
+    private float estimateFps() {
+        int n = frameTs.length;
+        long[] d = new long[n - 1];
+        int k = 0;
+        for (int i = 1; i < n; i++) {
+            long dt = frameTs[i] - frameTs[i - 1];
+            if (dt > 4000 && dt < 100000) d[k++] = dt; // 10–250 fps sahaja
+        }
+        if (k < 10) return -1;
+        java.util.Arrays.sort(d, 0, k);
+        return 1e6f / d[k / 2];
+    }
+
+    /**
+     * Siaran Malaysia biasanya 25/50 fps tetapi kebanyakan TV berjalan pada 60Hz → gerakan bergegar (nampak
+     * "lag"). Jika skrin bukan gandaan fps siaran, minta mod paparan yang sepadan (cth 50Hz) dengan resolusi sama.
+     * Dipulihkan bila keluar dari Live TV.
+     */
+    private void matchRefreshRate(float fps) {
+        if (!started || !Store.matchFps(this) || Build.VERSION.SDK_INT < 23 || fps < 10 || fps > 125) return;
+        try {
+            Display d = getWindowManager().getDefaultDisplay();
+            Display.Mode cur = d.getMode();
+            if (isMultiple(cur.getRefreshRate(), fps)) return; // sudah lancar
+            Display.Mode best = null;
+            float bestScore = Float.MAX_VALUE;
+            for (Display.Mode m : d.getSupportedModes()) {
+                if (m.getPhysicalWidth() != cur.getPhysicalWidth() || m.getPhysicalHeight() != cur.getPhysicalHeight()) continue;
+                float r = m.getRefreshRate();
+                if (!isMultiple(r, fps)) continue;
+                float err = Math.abs(r - Math.round(r / fps) * fps);
+                // utamakan ≥48Hz, kemudian padanan paling tepat (24 utk 24fps), kemudian yang terendah (50 dari 100)
+                float score = (r < 47 ? 1000 : 0) + err * 100 + r * 0.01f;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = m;
+                }
+            }
+            if (best == null) return;
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            if (savedModeId < 0) savedModeId = lp.preferredDisplayModeId;
+            lp.preferredDisplayModeId = best.getModeId();
+            getWindow().setAttributes(lp);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private static boolean isMultiple(float refresh, float fps) {
+        float mult = Math.round(refresh / fps);
+        return mult >= 1 && Math.abs(refresh - mult * fps) <= 0.6f;
+    }
+
+    private void restoreRefreshRate() {
+        if (savedModeId < 0 || Build.VERSION.SDK_INT < 23) return;
+        try {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.preferredDisplayModeId = savedModeId;
+            getWindow().setAttributes(lp);
+        } catch (RuntimeException ignored) {
+        }
+        savedModeId = -1;
     }
 
     /** Papar jadual (null/kosong = sembunyi & kecilkan kotak info). */
@@ -386,6 +499,8 @@ public class LiveTvActivity extends BaseActivity {
     private void start(int i) {
         if (i < 0 || i >= Hub.channels.size()) return;
         resLabel.setVisibility(View.GONE);
+        frameCount = 0;
+        fpsDone = false;
         pending = -1;
         index = i;
         retries = 0; // cuba semula dikira bagi setiap saluran; "skips" sengaja TIDAK direset di sini
@@ -545,6 +660,8 @@ public class LiveTvActivity extends BaseActivity {
     protected void onStart() {
         super.onStart();
         started = true;
+        fpsDone = false; // kesan semula & minta mod paparan bila kembali
+        frameCount = 0;
         h.removeCallbacks(watchdog); // elak watchdog berganda selepas jeda/sambung berulang
         h.postDelayed(watchdog, 3000);
         h.postDelayed(hideInfo, 4500);
@@ -569,6 +686,7 @@ public class LiveTvActivity extends BaseActivity {
         h.removeCallbacksAndMessages(null);
         digitBuf = "";
         digits.setVisibility(View.GONE);
+        restoreRefreshRate(); // kembalikan kadar segar skrin asal untuk apl lain
         // stop() (bukan pause) supaya sambungan rangkaian/akaun IPTV dilepaskan semasa apl lain dibuka
         if (player != null) player.stop();
         bufferingSince = 0;

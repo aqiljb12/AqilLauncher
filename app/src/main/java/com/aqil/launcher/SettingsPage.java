@@ -123,9 +123,39 @@ final class SettingsPage extends Page {
                 rebuildKeepFocus();
             }
         });
+        row(col, "Mod strim (anti-lag)", Store.smooth(a)
+                        ? "Lancar – penimbal lebih besar, kurang tersekat (tukar saluran ±1 saat lebih lambat)"
+                        : "Cepat – tukar saluran paling laju, lebih mudah tersekat bila Internet goyang",
+                Store.smooth(a) ? "Lancar" : "Cepat", new Runnable() {
+                    @Override
+                    public void run() {
+                        Store.setSmooth(a, !Store.smooth(a));
+                        rebuildKeepFocus();
+                    }
+                });
+        row(col, "Padan kadar segar skrin", Store.matchFps(a)
+                        ? "Hidup – skrin tukar ke 50Hz untuk siaran 25/50fps, gerakan tak bergegar (skrin gelap ±1s sekali)"
+                        : "Mati – kekal pada kadar segar sekarang", Store.matchFps(a) ? "ON" : "OFF", new Runnable() {
+                    @Override
+                    public void run() {
+                        Store.setMatchFps(a, !Store.matchFps(a));
+                        rebuildKeepFocus();
+                    }
+                });
+        if (Store.xtream(a) != null) row(col, "Format strim akaun IPTV", Store.xtFormat(a).equals("ts")
+                        ? "TS – asal; cuba HLS jika siaran akaun selalu tersekat"
+                        : "HLS – cuba TS jika siaran tak keluar", Store.xtFormat(a).equals("ts") ? "TS" : "HLS", new Runnable() {
+                    @Override
+                    public void run() {
+                        Store.setXtFormat(a, Store.xtFormat(a).equals("ts") ? "m3u8" : "ts");
+                        Toast.makeText(a, "Memuat semula saluran akaun…", Toast.LENGTH_SHORT).show();
+                        Hub.loadChannels(true, null);
+                        rebuildKeepFocus();
+                    }
+                });
         row(col, "Kualiti video Live TV", Store.maxQuality(a)
-                        ? "Tertinggi – sentiasa pilih resolusi paling tinggi yang siaran sediakan"
-                        : "Auto – ikut kelajuan Internet (jimat data)", Store.maxQuality(a) ? "Tertinggi" : "Auto", new Runnable() {
+                        ? "Tertinggi – paksa resolusi paling tinggi (boleh tersekat jika Internet perlahan)"
+                        : "Pintar – mula terus HD, turun sekejap hanya bila Internet perlahan", Store.maxQuality(a) ? "Tertinggi" : "Pintar", new Runnable() {
                     @Override
                     public void run() {
                         Store.setMaxQuality(a, !Store.maxQuality(a));

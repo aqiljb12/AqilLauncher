@@ -153,13 +153,43 @@ final class Store {
         p(c).edit().putString("wplace", name + "|" + lat + "|" + lon).apply();
     }
 
-    /** Live TV skrin penuh: paksa kualiti tertinggi (lalai) atau Auto ikut kelajuan Internet. */
+    /**
+     * Kualiti Live TV. false (lalai) = "Pintar": mula terus di HD tetapi boleh turun sekejap bila Internet
+     * perlahan (elak tersekat). true = "Tertinggi": paksa resolusi tertinggi walaupun Internet perlahan.
+     */
     static boolean maxQuality(Context c) {
-        return p(c).getBoolean("maxQ", true);
+        return p(c).getBoolean("maxQ2", false);
     }
 
     static void setMaxQuality(Context c, boolean on) {
-        p(c).edit().putBoolean("maxQ", on).apply();
+        p(c).edit().putBoolean("maxQ2", on).apply();
+    }
+
+    /** Mod strim: true (lalai) = Lancar (penimbal besar, kurang tersekat); false = Cepat (tukar saluran laju). */
+    static boolean smooth(Context c) {
+        return p(c).getBoolean("smooth", true);
+    }
+
+    static void setSmooth(Context c, boolean on) {
+        p(c).edit().putBoolean("smooth", on).apply();
+    }
+
+    /** Tukar kadar segar skrin ikut siaran (cth 50Hz untuk siaran Malaysia 25/50fps) supaya gerakan tak bergegar. */
+    static boolean matchFps(Context c) {
+        return p(c).getBoolean("matchFps", true);
+    }
+
+    static void setMatchFps(Context c, boolean on) {
+        p(c).edit().putBoolean("matchFps", on).apply();
+    }
+
+    /** Format strim akaun Xtream: "ts" (lalai) atau "m3u8" (HLS). */
+    static String xtFormat(Context c) {
+        return p(c).getString("xtFmt", "ts");
+    }
+
+    static void setXtFormat(Context c, String f) {
+        p(c).edit().putString("xtFmt", f).apply();
     }
 
     static boolean autoSkip(Context c) {

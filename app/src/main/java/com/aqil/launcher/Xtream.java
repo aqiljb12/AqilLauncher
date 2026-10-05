@@ -120,6 +120,7 @@ final class Xtream {
                 }
                 data = new JSONObject();
                 data.put("ext", ext);
+                data.put("fmts", fmts == null ? new JSONArray() : fmts);
                 data.put("cats", new JSONArray(get(api(x, "get_live_categories"))));
                 data.put("streams", new JSONArray(get(api(x, "get_live_streams"))));
                 try (FileOutputStream out = new FileOutputStream(cache)) {
@@ -139,6 +140,10 @@ final class Xtream {
             cats.put(o.optString("category_id"), o.optString("category_name"));
         }
         String ext = data.optString("ext", "ts");
+        // pilihan pengguna (Tetapan › Format akaun IPTV), hanya jika panel benarkan format itu
+        String want = Store.xtFormat(c);
+        JSONArray allowed = data.optJSONArray("fmts");
+        if (allowed == null || allowed.length() == 0 || allowed.toString().contains("\"" + want + "\"")) ext = want;
         JSONArray st = data.getJSONArray("streams");
         List<Channel> out = new ArrayList<>(st.length());
         for (int i = 0; i < st.length(); i++) {

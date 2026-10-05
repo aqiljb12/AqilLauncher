@@ -35,11 +35,17 @@ final class Streams {
         DefaultRenderersFactory rf = new DefaultRenderersFactory(c)
                 .setEnableDecoderFallback(true)
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+        // Penimbal (anti-lag): mod Lancar mula main selepas 2.5s ditimbal dan, selepas tersekat, tunggu 6s
+        // supaya tidak tersekat-sekat berulang. Had 48MB supaya selamat untuk memori TV box.
+        boolean smooth = !preview && Store.smooth(c);
         DefaultLoadControl lc = preview
                 ? new DefaultLoadControl.Builder().setBufferDurationsMs(4000, 15000, 800, 1500).build()
-                : new DefaultLoadControl.Builder().setBufferDurationsMs(20000, 60000, 1500, 3000).build();
-        // Kualiti: skrin penuh = resolusi TERTINGGI yang peranti boleh nyahkod (siaran HLS/DASH berbilang kualiti
-        // tidak lagi bermula/kekal di versi kabur); pratonton kecil = SD sahaja untuk jimat data.
+                : smooth
+                ? new DefaultLoadControl.Builder().setBufferDurationsMs(30000, 90000, 2500, 6000)
+                        .setTargetBufferBytes(48 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(false).build()
+                : new DefaultLoadControl.Builder().setBufferDurationsMs(15000, 50000, 1000, 2500).build();
+        // Kualiti: "Pintar" (lalai) mula di HD (anggaran lebar jalur awal tinggi) tetapi boleh turun bila Internet
+        // perlahan supaya tak tersekat; "Tertinggi" paksa resolusi tertinggi. Pratonton kecil = SD sahaja.
         DefaultTrackSelector ts = new DefaultTrackSelector(c);
         DefaultTrackSelector.Parameters.Builder pb = ts.buildUponParameters();
         if (preview) pb.setMaxVideoSizeSd();
@@ -49,7 +55,16 @@ final class Streams {
         DefaultBandwidthMeter bw = new DefaultBandwidthMeter.Builder(c).setInitialBitrateEstimate(preview ? 2_000_000L : 20_000_000L).build();
         ExoPlayer p = new ExoPlayer.Builder(c, rf).setLoadControl(lc).setTrackSelector(ts).setBandwidthMeter(bw).build();
         p.setPlayWhenReady(true);
+        if (!preview) meter = bw;
         return p;
+    }
+
+    /** Pengukur lebar jalur pemain skrin penuh terakhir (untuk paparan "Mbps" dalam info saluran). */
+    static volatile DefaultBandwidthMeter meter;
+
+    static long bitrateEstimate() {
+        DefaultBandwidthMeter m = meter;
+        return m == null ? 0 : m.getBitrateEstimate();
     }
 
     static MediaSource source(Context ctx, Channel c, String forceMime) {
