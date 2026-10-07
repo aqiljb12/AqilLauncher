@@ -23,6 +23,8 @@ final class Vod {
     /** Satu filem / siri dalam grid. */
     static final class Item {
         String kind, id, name, icon, rating = "", ext = "mp4", cat;
+        /** Ada terus dalam senarai siri (get_series); filem biasanya perlu get_vod_info. */
+        String plot = "", year = "", genre = "", backdrop = "";
     }
 
     /** Maklumat penuh (filem atau siri). */
@@ -46,6 +48,9 @@ final class Vod {
     static void clearCache() {
         synchronized (cats) {
             cats.clear();
+        }
+        synchronized (details) {
+            details.clear();
         }
         synchronized (lists) {
             lists.clear();
@@ -96,6 +101,12 @@ final class Vod {
             if (it.rating.equals("0") || it.rating.equals("null")) it.rating = "";
             it.ext = o.optString("container_extension", "mp4");
             it.cat = o.optString("category_id");
+            it.plot = clean(o.optString("plot", ""));
+            it.genre = clean(o.optString("genre", ""));
+            String rel = clean(o.optString("releaseDate", o.optString("release_date", o.optString("year", ""))));
+            it.year = rel.length() >= 4 ? rel.substring(0, 4) : rel;
+            JSONArray bd = o.optJSONArray("backdrop_path");
+            if (bd != null && bd.length() > 0) it.backdrop = clean(bd.optString(0, ""));
             long ad = 0;
             try {
                 ad = Long.parseLong(o.optString(kind.equals(MOVIE) ? "added" : "last_modified", "0"));
@@ -119,7 +130,38 @@ final class Vod {
         return out;
     }
 
+    /** Butiran yang sudah dimuat (atau null) – untuk paparan serta-merta tanpa rangkaian. */
+    static Detail cachedDetail(Item it) {
+        synchronized (details) {
+            return details.get(it.kind + "|" + it.id);
+        }
+    }
+
+    /** Kategori yang sudah dimuat (atau null). */
+    static List<String[]> cachedCategories(String kind) {
+        synchronized (cats) {
+            return cats.get(kind);
+        }
+    }
+
+    private static final Map<String, Detail> details = new java.util.LinkedHashMap<String, Detail>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Detail> e) {
+            return size() > 80;
+        }
+    };
+
     static Detail detail(Context c, Item it) throws Exception {
+        Detail hit = cachedDetail(it);
+        if (hit != null) return hit;
+        Detail d = loadDetail(c, it);
+        synchronized (details) {
+            details.put(it.kind + "|" + it.id, d);
+        }
+        return d;
+    }
+
+    private static Detail loadDetail(Context c, Item it) throws Exception {
         String[] x = Store.xtream(c);
         if (x == null) throw new Exception("Log masuk akaun IPTV dahulu");
         Detail d = new Detail();

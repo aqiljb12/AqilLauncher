@@ -39,6 +39,14 @@ public class MainActivity extends BaseActivity {
     private Weather.Icon wicon;
     private boolean receiverOn, dirty, stopped;
     private Object perfWatch;
+    // ---- sidebar auto-kecil (gaya tvOS): disorok bila fokus masuk ke kandungan, kembali bila tekan kiri / Back
+    private View sideBox;
+    private FrameLayout navHandle;
+    private ImageView handleIcon;
+    private final java.util.List<View> header = new java.util.ArrayList<>();
+    private boolean navCollapsed;
+    private final int[] navIcons = {R.drawable.ic_home, R.drawable.ic_apps, R.drawable.ic_livetv, R.drawable.ic_movie,
+            R.drawable.ic_gamepad, R.drawable.ic_settings};
 
     private final BroadcastReceiver pkgReceiver = new BroadcastReceiver() {
         @Override
@@ -92,6 +100,7 @@ public class MainActivity extends BaseActivity {
         root.addView(temp, Ui.at(606, 52, -2, -2));
         place = Ui.text(this, "", 26, 0xE6FFFFFF, Ui.MEDIUM);
         root.addView(place, Ui.at(608, 110, 420, -2));
+        java.util.Collections.addAll(header, clock, date, div, wicon, temp, place);
 
         // ---- butang bulat kanan atas
         int[][] tops = {{R.drawable.ic_search, 0}, {R.drawable.ic_settings, 1}, {R.drawable.ic_wifi, 2}, {R.drawable.ic_person, 3}};
@@ -112,6 +121,7 @@ public class MainActivity extends BaseActivity {
 
         // ---- sidebar kiri (satu-satunya navigasi) dengan penunjuk yang meluncur
         FrameLayout sideBox = new FrameLayout(this);
+        this.sideBox = sideBox;
         sideBox.setBackground(Ui.glass(S.px(44)));
         Ui.noClip(sideBox);
         indicator = new View(this);
@@ -123,6 +133,14 @@ public class MainActivity extends BaseActivity {
         Ui.noClip(side);
         sideBox.addView(side, new FrameLayout.LayoutParams(-1, -2));
         root.addView(sideBox, Ui.at(40, 214, 136, 6 * 118 + 18));
+        // pemegang kecil (ikon halaman aktif) di tepi kiri semasa sidebar disorok
+        navHandle = new FrameLayout(this);
+        navHandle.setBackground(Ui.glass(S.px(30)));
+        handleIcon = Ui.icon(this, R.drawable.ic_home, Ui.WHITE);
+        handleIcon.setColorFilter(Ui.WHITE, android.graphics.PorterDuff.Mode.SRC_IN); // kekal putih bila ikon ditukar
+        navHandle.addView(handleIcon, new FrameLayout.LayoutParams(S.px(32), S.px(32), Gravity.CENTER));
+        navHandle.setAlpha(0f);
+        root.addView(navHandle, Ui.at(14, 252, 58, 60));
 
         // ---- halaman
         host = new FrameLayout(this);
@@ -130,7 +148,7 @@ public class MainActivity extends BaseActivity {
         root.addView(host, Ui.at(214, 186, 1666, 864));
 
         String[] labels = {"Home", "Apl", "Live TV", "Filem", "Remote", "Tetapan"};
-        int[] icons = {R.drawable.ic_home, R.drawable.ic_apps, R.drawable.ic_livetv, R.drawable.ic_movie, R.drawable.ic_gamepad, R.drawable.ic_settings};
+        int[] icons = navIcons;
         for (int i = 0; i < order.length; i++) {
             final NavItem n = new NavItem(this, order[i], icons[i], labels[i], 30);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(S.px(116), S.px(112));
@@ -148,6 +166,12 @@ public class MainActivity extends BaseActivity {
             });
         }
         setContentView(root);
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener(new android.view.ViewTreeObserver.OnGlobalFocusChangeListener() {
+            @Override
+            public void onGlobalFocusChanged(View oldFocus, View newFocus) {
+                if (newFocus != null) setNavCollapsed(isDescendant(newFocus, host));
+            }
+        });
 
         reloadWallpaper();
         showPage("home");
@@ -195,6 +219,23 @@ public class MainActivity extends BaseActivity {
      */
     private void updateHold() {
         wall.setHold(stopped || "live".equals(current) || "movies".equals(current));
+    }
+
+    /**
+     * Sidebar meluncur keluar & kandungan (serta jam/cuaca) bergerak ke kiri untuk guna ruang itu; pemegang kecil
+     * dengan ikon halaman aktif kekal di tepi. Navigasi fokus (kiri) masih menemui sidebar kerana carian fokus
+     * guna kedudukan susun atur, bukan kedudukan visual.
+     */
+    private void setNavCollapsed(boolean c) {
+        if (c == navCollapsed) return;
+        navCollapsed = c;
+        android.view.animation.DecelerateInterpolator in = new android.view.animation.DecelerateInterpolator(2f);
+        float dx = c ? -S.px(140) : 0;
+        sideBox.animate().translationX(c ? -S.px(190) : 0).alpha(c ? 0f : 1f).setDuration(320).setInterpolator(in).start();
+        host.animate().translationX(dx).setDuration(380).setInterpolator(in).start();
+        for (View v : header) v.animate().translationX(dx).setDuration(380).setInterpolator(in).start();
+        navHandle.animate().alpha(c ? 1f : 0f).translationX(c ? 0 : -S.px(24)).setStartDelay(c ? 140 : 0)
+                .setDuration(c ? 360 : 160).setInterpolator(in).start();
     }
 
     /** Senarai saluran ditukar (kemas kini latar): halaman yang memaparkan saluran dibina semula. */
@@ -330,6 +371,8 @@ public class MainActivity extends BaseActivity {
             if (order[i].equals(name)) {
                 indicator.animate().translationY(S.px(118) * i).setDuration(420)
                         .setInterpolator(new android.view.animation.OvershootInterpolator(1.4f)).start();
+                handleIcon.setImageResource(navIcons[i]);
+                navHandle.setTranslationY(S.px(118) * i);
             }
         }
         ambient(0);
@@ -525,6 +568,13 @@ public class MainActivity extends BaseActivity {
     public void onBackPressed() {
         Page cur = current == null ? null : pages.get(current);
         if (cur != null && cur.onBack()) return; // cth. tutup butiran filem dahulu
+        // fokus dalam kandungan: Back dahulu tunjuk sidebar (fokus pada halaman aktif), Back sekali lagi → Home
+        View f = getCurrentFocus();
+        NavItem[] nav = current == null ? null : navs.get(current);
+        if (f != null && isDescendant(f, host) && nav != null && nav.length > 0) {
+            nav[0].requestFocus();
+            return;
+        }
         if (!"home".equals(current)) {
             showPage("home");
         }

@@ -1,6 +1,8 @@
 package com.aqil.launcher;
 
+import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
@@ -18,10 +20,35 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** Filem & Siri dari akaun IPTV: grid poster ikut kategori, carian, sambung tonton, butiran + episod. */
+/**
+ * Filem & Siri dari akaun IPTV, gaya Apple TV / Netflix:
+ *  - Paparan utama: "hero" besar di atas (gambar latar, tajuk, maklumat, sinopsis) yang mengikut poster yang difokus,
+ *    dan baris-baris poster yang skrol ke kanan (Sambung tonton + satu baris bagi setiap kategori, dimuat malas).
+ *  - "Lihat semua" / "Semua kategori" / carian → grid poster penuh dengan cip kategori.
+ *  - Butiran filem / siri (musim & episod).
+ */
 final class MoviesPage extends Page {
-    private static final int PER_PAGE = 48, COLS = 8;
+    private static final int PER_PAGE = 48, COLS = 8, MAX_ROWS = 12, ROW_ITEMS = 20;
+    private static final ExecutorService HERO_IO = Executors.newSingleThreadExecutor();
+    /** true = grid kategori / carian; false = paparan baris (utama). */
+    private boolean grid;
+    // ---- paparan baris
+    private int browseGen;
+    private ImageView heroBlur, heroBack;
+    private TextView heroTitle, heroMeta, heroPlot, heroKind;
+    private Object heroFor;
+    private ScrollView rowsSv;
+    private String pendingFocus;
+    private View fallbackFocus;
+    private final Runnable heroFetch = new Runnable() {
+        @Override
+        public void run() {
+            fetchHeroDetail();
+        }
+    };
     private String kind = Vod.MOVIE, catId, catName, query;
     private List<String[]> cats;
     private List<Vod.Item> items;
@@ -47,10 +74,14 @@ final class MoviesPage extends Page {
             refocus();
             return true;
         }
-        if (query != null) {
+        if (grid) {
+            grid = false;
             query = null;
+            catId = null;
+            catName = null;
             pageNo = 0;
-            load();
+            build();
+            refocus();
             return true;
         }
         return false;
@@ -102,8 +133,14 @@ final class MoviesPage extends Page {
 
     private void refocus() {
         View t = lastFocusId == null ? null : root.findViewWithTag(lastFocusId);
-        if (t != null) t.requestFocus();
-        else if (firstView != null) firstView.requestFocus();
+        if (t != null) {
+            t.requestFocus();
+            return;
+        }
+        // baris belum dimuat: fokus sementara, kemudian pindah bila baris yang mengandungi item itu siap
+        pendingFocus = lastFocusId == null ? "first" : lastFocusId;
+        fallbackFocus = firstView;
+        if (firstView != null) firstView.requestFocus();
     }
 
     // ---------------------------------------------------------------- bina
@@ -127,6 +164,10 @@ final class MoviesPage extends Page {
             buildDetail();
             return;
         }
+        if (!grid) {
+            buildBrowse();
+            return;
+        }
         if (items == null && !loading && error == null) {
             load();
             return;
@@ -140,10 +181,11 @@ final class MoviesPage extends Page {
 
         // tab
         LinearLayout tabs = new FrontLayout(a, LinearLayout.HORIZONTAL);
+        tabs.addView(chip("‹  Utama", false, "tab:home", v -> onBack()), Ui.lin(-2, 60, 14));
         tabs.addView(chip("Filem", kind.equals(Vod.MOVIE) && query == null, "tab:movie", v -> switchKind(Vod.MOVIE)), Ui.lin(-2, 60, 14));
         tabs.addView(chip("Siri", kind.equals(Vod.SERIES) && query == null, "tab:series", v -> switchKind(Vod.SERIES)), Ui.lin(-2, 60, 14));
         tabs.addView(chip("Cari…", query != null, "tab:search", v -> askSearch()), Ui.lin(-2, 60, 0));
-        root.addView(tabs, Ui.at(1100, 6, -2, 60));
+        root.addView(tabs, Ui.at(900, 6, -2, 60));
 
         // kategori
         if (cats != null && query == null) {
@@ -173,8 +215,6 @@ final class MoviesPage extends Page {
         col.setPadding(S.px(14), S.px(20), S.px(14), S.px(60));
         Ui.clipToBounds(sv);
         sv.addView(col);
-
-        if (kind.equals(Vod.MOVIE) && query == null && pageNo == 0) addContinueRow(col, sv);
 
         if (items != null) {
             int pages = Math.max(1, (items.size() + PER_PAGE - 1) / PER_PAGE);
@@ -212,7 +252,7 @@ final class MoviesPage extends Page {
             if (items.isEmpty()) col.addView(Ui.text(a, "Tiada kandungan dalam kategori ini.", 26, Ui.FAINT, Ui.MEDIUM));
         }
         root.addView(sv, Ui.at(-14, query == null && cats != null ? 180 : 96, 1694, query == null && cats != null ? 684 : 768));
-        if (firstView == null) firstView = tabs.getChildAt(0);
+        if (firstView == null) firstView = tabs.getChildAt(1);
     }
 
     private void switchKind(String k) {
@@ -222,6 +262,22 @@ final class MoviesPage extends Page {
         query = null;
         pageNo = 0;
         lastFocusId = k.equals(Vod.MOVIE) ? "tab:movie" : "tab:series";
+        if (grid) load();
+        else {
+            build();
+            refocus();
+        }
+    }
+
+    /** Buka grid penuh bagi satu kategori (null = kategori pertama). */
+    private void openGrid(String id, String name) {
+        grid = true;
+        query = null;
+        catId = id;
+        catName = name;
+        items = null; // jangan tunjuk grid kategori lama semasa memuat
+        pageNo = 0;
+        lastFocusId = null;
         load();
     }
 
@@ -232,6 +288,7 @@ final class MoviesPage extends Page {
             String s = q.getText().toString().trim();
             if (s.isEmpty()) return;
             query = s;
+            grid = true;
             pageNo = 0;
             lastFocusId = null;
             Toast.makeText(a, "Mencari… (kali pertama mungkin ambil masa)", Toast.LENGTH_SHORT).show();
@@ -283,14 +340,237 @@ final class MoviesPage extends Page {
         return c;
     }
 
-    /** Baris "Sambung tonton" dari sejarah tontonan. */
-    private void addContinueRow(LinearLayout col, final ScrollView sv) {
+    // ---------------------------------------------------------------- paparan utama (hero + baris)
+
+    /** ImageView yang muncul perlahan (fade) setiap kali gambar baharu dipasang. */
+    private static final class FadeImage extends ImageView {
+        private final float target;
+
+        FadeImage(Context c, float target) {
+            super(c);
+            this.target = target;
+            setScaleType(ScaleType.CENTER_CROP);
+        }
+
+        @Override
+        public void setImageBitmap(Bitmap b) {
+            super.setImageBitmap(b);
+            if (b == null) return;
+            animate().cancel();
+            setAlpha(Math.min(getAlpha(), target * 0.35f));
+            animate().alpha(target).setDuration(420).start();
+        }
+    }
+
+    private void buildBrowse() {
+        final int g = ++browseGen;
+        heroFor = null;
+        // ---- hero: lebih lebar dari halaman supaya penuh ke kanan bila sidebar disorok
+        FrameLayout hero = new FrameLayout(a);
+        hero.setBackground(Ui.solid(0xFF0B0E18, S.px(34)));
+        hero.setClipToOutline(true);
+        heroBlur = new FadeImage(a, 0.6f); // poster dikecilkan ke ~36px lalu dibesarkan = latar kabur lembut
+        hero.addView(heroBlur, new FrameLayout.LayoutParams(-1, -1));
+        heroBack = new FadeImage(a, 0.9f); // gambar latar sebenar (backdrop) bila ada
+        hero.addView(heroBack, new FrameLayout.LayoutParams(-1, -1));
+        View shade = new View(a);
+        shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, new int[]{0xF50B0E18, 0xC80B0E18, 0x400B0E18, 0x100B0E18}));
+        hero.addView(shade, new FrameLayout.LayoutParams(-1, -1));
+        View fade = new View(a);
+        fade.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x000B0E18, 0xD00B0E18}));
+        hero.addView(fade, new FrameLayout.LayoutParams(-1, S.px(150), Gravity.BOTTOM));
+        heroKind = Ui.text(a, kind.equals(Vod.MOVIE) ? "FILEM" : "SIRI", 20, 0xFF64B5FF, Ui.BOLD);
+        heroKind.setLetterSpacing(0.2f);
+        hero.addView(heroKind, Ui.at(48, 96, -2, -2));
+        heroTitle = Ui.text(a, "Memuatkan…", 54, Ui.WHITE, Ui.BOLD);
+        heroTitle.setShadowLayer(12, 0, 3, 0x99000000);
+        hero.addView(heroTitle, Ui.at(46, 126, 1050, -2));
+        heroMeta = Ui.text(a, "", 24, 0xE6FFFFFF, Ui.MEDIUM);
+        hero.addView(heroMeta, Ui.at(48, 200, 1050, -2));
+        heroPlot = Ui.text(a, "", 23, 0xD9FFFFFF, Ui.MEDIUM);
+        heroPlot.setSingleLine(false);
+        heroPlot.setMaxLines(3);
+        heroPlot.setLineSpacing(S.px(5), 1f);
+        hero.addView(heroPlot, Ui.at(48, 244, 980, -2));
+        root.addView(hero, Ui.at(0, 0, 1806, 404));
+
+        // ---- tab (kanan atas hero, kekal dalam kawasan nampak)
+        FrameLayout tabsBox = new FrameLayout(a);
+        Ui.noClip(tabsBox);
+        LinearLayout tabs = new FrontLayout(a, LinearLayout.HORIZONTAL);
+        tabs.addView(chip("Filem", kind.equals(Vod.MOVIE), "tab:movie", v -> switchKind(Vod.MOVIE)), Ui.lin(-2, 58, 12));
+        tabs.addView(chip("Siri", kind.equals(Vod.SERIES), "tab:series", v -> switchKind(Vod.SERIES)), Ui.lin(-2, 58, 12));
+        tabs.addView(chip("Cari…", false, "tab:search", v -> askSearch()), Ui.lin(-2, 58, 12));
+        tabs.addView(chip("Semua kategori", false, "tab:all", v -> openGrid(null, null)), Ui.lin(-2, 58, 0));
+        tabsBox.addView(tabs, new FrameLayout.LayoutParams(-2, S.px(58), Gravity.END));
+        root.addView(tabsBox, Ui.at(0, 26, 1636, 58));
+        firstView = tabs.getChildAt(kind.equals(Vod.MOVIE) ? 0 : 1);
+
+        // ---- baris
+        rowsSv = new ScrollView(a);
+        rowsSv.setVerticalScrollBarEnabled(false);
+        rowsSv.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout col = new FrontLayout(a, LinearLayout.VERTICAL);
+        col.setPadding(0, S.px(4), 0, S.px(320)); // ruang bawah supaya baris terakhir boleh naik ke atas
+        Ui.clipToBounds(rowsSv);
+        rowsSv.addView(col);
+        root.addView(rowsSv, Ui.at(-14, 410, 1834, 454));
+
+        boolean hasCont = addContinueRow(col);
+        List<String[]> cs = Vod.cachedCategories(kind);
+        if (cs == null) {
+            col.addView(Ui.text(a, "Memuatkan kategori…", 24, Ui.FAINT, Ui.MEDIUM), rowTitleLp());
+            final String k = kind;
+            Vod.IO.execute(() -> {
+                String err = null;
+                try {
+                    Vod.categories(a, k);
+                } catch (Exception e) {
+                    err = e.getMessage() == null ? e.toString() : e.getMessage();
+                }
+                final String fe = err;
+                Hub.main.post(() -> {
+                    if (g != browseGen || !root.isAttachedToWindow() || grid || open != null) return;
+                    if (fe != null) {
+                        heroTitle.setText("Tidak dapat memuatkan");
+                        heroMeta.setText(fe);
+                        return;
+                    }
+                    View f = a.getCurrentFocus();
+                    String keep = f != null && f.getTag() instanceof String ? (String) f.getTag() : null;
+                    build();
+                    View t = keep == null ? null : root.findViewWithTag(keep);
+                    if (t != null) t.requestFocus();
+                    else refocus();
+                });
+            });
+            return;
+        }
+        if (cs.isEmpty()) {
+            heroTitle.setText(kind.equals(Vod.MOVIE) ? "Tiada filem" : "Tiada siri");
+            heroMeta.setText("Akaun IPTV ini tiada kandungan " + (kind.equals(Vod.MOVIE) ? "filem." : "siri."));
+        }
+        if (pendingFocus == null && !hasCont) {
+            pendingFocus = "first";
+            fallbackFocus = firstView;
+        }
+        for (int i = 0; i < cs.size() && i < MAX_ROWS; i++) addCategoryRow(col, cs.get(i), g, i == 0 && !hasCont);
+        if (cs.size() > MAX_ROWS) {
+            Row more = new Row(a, "Semua " + cs.size() + " kategori  ›", null, null);
+            more.flat();
+            more.setTag("row:allcats");
+            more.setOnClickListener(v -> openGrid(null, null));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(S.px(520), S.px(74));
+            lp.leftMargin = S.px(14);
+            lp.topMargin = S.px(10);
+            col.addView(more, lp);
+        }
+    }
+
+    private LinearLayout.LayoutParams rowTitleLp() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.leftMargin = S.px(18);
+        lp.topMargin = S.px(8);
+        return lp;
+    }
+
+    /** Satu blok baris: tajuk + jalur poster mendatar. Pulangkan jalur (untuk diisi). */
+    private LinearLayout rowBlock(LinearLayout col, String title, int height) {
+        LinearLayout block = new FrontLayout(a, LinearLayout.VERTICAL);
+        block.addView(Ui.text(a, title, 27, Ui.WHITE, Ui.MEDIUM), rowTitleLp());
+        HorizontalScrollView hs = new HorizontalScrollView(a);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout strip = new FrontLayout(a, LinearLayout.HORIZONTAL);
+        strip.setPadding(S.px(18), S.px(16), S.px(60), S.px(20));
+        Ui.clipToBounds(hs);
+        hs.addView(strip);
+        block.addView(hs, new LinearLayout.LayoutParams(-1, S.px(height + 36)));
+        col.addView(block);
+        return strip;
+    }
+
+    /** Fokus pada item dalam baris → baris naik ke atas kawasan baris & hero dikemas kini. */
+    private void focusRow(View card, Object item) {
+        View block = card;
+        while (block != null && !(block.getParent() instanceof LinearLayout && ((View) block.getParent()).getParent() == rowsSv)) {
+            block = block.getParent() instanceof View ? (View) block.getParent() : null;
+        }
+        if (block != null) rowsSv.smoothScrollTo(0, Math.max(0, block.getTop() - S.px(4)));
+        showHero(item);
+    }
+
+    private void addCategoryRow(LinearLayout col, final String[] cat, final int g, final boolean first) {
+        final LinearLayout strip = rowBlock(col, cat[1], 240);
+        for (int i = 0; i < 7; i++) { // rangka sementara semasa dimuat
+            View ph = new View(a);
+            ph.setBackground(Ui.solid(0x22FFFFFF, S.px(18)));
+            strip.addView(ph, Ui.lin(160, 240, 18));
+        }
+        final String k = kind;
+        Vod.IO.execute(() -> {
+            List<Vod.Item> l = null;
+            try {
+                l = Vod.items(a, k, cat[0]);
+            } catch (Exception ignored) {
+            }
+            final List<Vod.Item> fl = l;
+            Hub.main.post(() -> {
+                if (g != browseGen || !root.isAttachedToWindow() || grid || open != null) return;
+                strip.removeAllViews();
+                if (fl == null || fl.isEmpty()) {
+                    strip.addView(Ui.text(a, fl == null ? "Gagal dimuat" : "Tiada kandungan", 22, Ui.FAINT, Ui.MEDIUM));
+                    return;
+                }
+                for (int i = 0; i < fl.size() && i < ROW_ITEMS; i++) strip.addView(rowPoster(fl.get(i)), Ui.lin(160, 240, 18));
+                Card all = new Card(a, 18, Ui.glass(S.px(18))).flat();
+                all.scaleTo = 1.09f;
+                all.setTag("all:" + cat[0]);
+                TextView t = Ui.text(a, "Lihat semua\n" + fl.size() + "  ›", 24, Ui.WHITE, Ui.MEDIUM);
+                t.setSingleLine(false);
+                t.setGravity(Gravity.CENTER);
+                all.addView(t, new FrameLayout.LayoutParams(-1, -1));
+                all.setOnClickListener(v -> openGrid(cat[0], cat[1]));
+                all.onFocus = (c, gained) -> {
+                    if (gained) focusRow(c, cat[1]);
+                };
+                strip.addView(all, Ui.lin(160, 240, 0));
+                if (heroFor == null) showHero(fl.get(0));
+                applyPendingFocus(strip, first);
+            });
+        });
+    }
+
+    /** Fokus tertangguh: pindah ke item yang dikehendaki bila barisnya siap, jika pengguna belum bergerak. */
+    private void applyPendingFocus(LinearLayout strip, boolean firstRow) {
+        if (pendingFocus == null) return;
+        View cur = a.getCurrentFocus();
+        if (cur != null && cur != fallbackFocus) {
+            pendingFocus = null; // pengguna sudah bergerak sendiri
+            return;
+        }
+        View t = pendingFocus.equals("first") ? (firstRow && strip.getChildCount() > 0 ? strip.getChildAt(0) : null)
+                : strip.findViewWithTag(pendingFocus);
+        if (t != null) {
+            t.requestFocus();
+            pendingFocus = null;
+        }
+    }
+
+    private Card rowPoster(final Vod.Item it) {
+        Card c = poster(it);
+        c.onFocus = (card, gained) -> {
+            if (gained) focusRow(card, it);
+        };
+        return c;
+    }
+
+    /** Baris "Sambung tonton" dari sejarah tontonan (filem & episod). */
+    private boolean addContinueRow(LinearLayout col) {
         JSONArray h = Store.vodHistoryRaw(a);
-        if (h.length() == 0) return;
-        col.addView(Ui.text(a, "Sambung tonton", 30, Ui.WHITE, Ui.MEDIUM));
-        final LinearLayout row = new FrontLayout(a, LinearLayout.HORIZONTAL);
-        row.setPadding(0, S.px(16), 0, S.px(30));
-        for (int i = 0; i < h.length() && i < 6; i++) {
+        if (h.length() == 0) return false;
+        LinearLayout strip = rowBlock(col, "Sambung tonton", 170);
+        for (int i = 0; i < h.length() && i < 10; i++) {
             final JSONObject o = h.optJSONObject(i);
             if (o == null) continue;
             Card c = new Card(a, 18, Ui.solid(0xFF1A1D26, S.px(18))).flat();
@@ -311,7 +591,7 @@ final class MoviesPage extends Page {
             View track = new View(a);
             track.setBackground(Ui.solid(0x55FFFFFF, 0));
             c.addView(track, new FrameLayout.LayoutParams(-1, S.px(6), Gravity.BOTTOM));
-            long dur = o.optLong("dur", 1);
+            long dur = Math.max(1, o.optLong("dur", 1));
             View bar = new View(a);
             bar.setBackground(Ui.solid(0xFF2E8BFF, 0));
             c.addView(bar, new FrameLayout.LayoutParams(Math.round(S.px(300) * U.clamp(o.optLong("pos") / (float) dur, 0, 1)), S.px(6), Gravity.BOTTOM));
@@ -321,12 +601,98 @@ final class MoviesPage extends Page {
                 play(new String[]{o.optString("url")}, new String[]{o.optString("title")}, 0, o.optString("icon"));
             });
             c.onFocus = (card, gained) -> {
-                if (gained) sv.smoothScrollTo(0, 0);
+                if (gained) focusRow(card, o);
             };
-            row.addView(c, Ui.lin(300, 170, 20));
-            if (firstView == null) firstView = c;
+            strip.addView(c, Ui.lin(300, 170, 20));
+            if (i == 0) firstView = c;
         }
-        col.addView(row);
+        return true;
+    }
+
+    // ---------------------------------------------------------------- hero
+
+    private String heroIcon, heroBackUrl;
+    /** Gambar hero dipasang selepas fokus berhenti ~0.2s – skrol laju sepanjang baris tidak berkelip. */
+    private final Runnable heroImages = new Runnable() {
+        @Override
+        public void run() {
+            if (heroBlur == null) return;
+            if (heroIcon != null) Img.load(heroBlur, heroIcon, S.px(36)); // ~36px dibesarkan = latar kabur
+            if (heroBackUrl != null && !heroBackUrl.isEmpty()) Img.load(heroBack, heroBackUrl, S.px(1200));
+        }
+    };
+
+    private void showHero(Object o) {
+        if (heroTitle == null || o == heroFor) return;
+        heroFor = o;
+        root.removeCallbacks(heroFetch);
+        root.removeCallbacks(heroImages);
+        heroIcon = null;
+        heroBackUrl = null;
+        if (heroBack.getDrawable() != null) heroBack.animate().alpha(0f).setDuration(200).start();
+        if (o instanceof Vod.Item) {
+            Vod.Item it = (Vod.Item) o;
+            heroKind.setText(it.kind.equals(Vod.MOVIE) ? "FILEM" : "SIRI");
+            heroTitle.setText(it.name);
+            heroIcon = it.icon;
+            Vod.Detail d = Vod.cachedDetail(it);
+            heroText(it, d);
+            heroBackUrl = !it.backdrop.isEmpty() ? it.backdrop : d != null ? d.backdrop : "";
+            // filem: sinopsis & gambar latar hanya ada dalam get_vod_info → ambil bila fokus berhenti seketika
+            if (d == null && (it.plot.isEmpty() || heroBackUrl.isEmpty())) root.postDelayed(heroFetch, 450);
+        } else if (o instanceof JSONObject) {
+            JSONObject j = (JSONObject) o;
+            heroKind.setText("SAMBUNG TONTON");
+            heroTitle.setText(j.optString("title"));
+            long dur = Math.max(1, j.optLong("dur", 1)), pos = j.optLong("pos");
+            long left = Math.max(0, (dur - pos) / 60000);
+            heroMeta.setText(Math.round(100f * pos / dur) + "% ditonton  •  baki " + left + " minit");
+            heroPlot.setText("Tekan OK untuk sambung dari tempat terakhir.");
+            heroIcon = j.optString("icon");
+        } else if (o instanceof String) {
+            heroKind.setText("KATEGORI");
+            heroTitle.setText((String) o);
+            heroMeta.setText("Lihat semua dalam kategori ini");
+            heroPlot.setText("");
+        }
+        root.postDelayed(heroImages, 180);
+    }
+
+    private void heroText(Vod.Item it, Vod.Detail d) {
+        StringBuilder meta = new StringBuilder();
+        String year = d != null && !d.year.isEmpty() ? d.year : it.year;
+        String genre = d != null && !d.genre.isEmpty() ? d.genre : it.genre;
+        String rating = d != null && !d.rating.isEmpty() ? d.rating : it.rating;
+        for (String s : new String[]{year, genre, d == null ? "" : d.duration, rating.isEmpty() ? "" : "★ " + rating}) {
+            if (s == null || s.isEmpty()) continue;
+            if (meta.length() > 0) meta.append("   •   ");
+            meta.append(s);
+        }
+        heroMeta.setText(meta.toString());
+        String plot = d != null && !d.plot.isEmpty() ? d.plot : it.plot;
+        heroPlot.setText(plot);
+    }
+
+    private void fetchHeroDetail() {
+        if (!(heroFor instanceof Vod.Item)) return;
+        final Vod.Item it = (Vod.Item) heroFor;
+        final int g = browseGen;
+        HERO_IO.execute(() -> {
+            Vod.Detail d = null;
+            try {
+                d = Vod.detail(a, it);
+            } catch (Exception ignored) {
+            }
+            final Vod.Detail fd = d;
+            Hub.main.post(() -> {
+                if (fd == null || g != browseGen || heroFor != it || heroTitle == null) return;
+                heroText(it, fd);
+                if (it.backdrop.isEmpty() && !fd.backdrop.isEmpty()) {
+                    heroBackUrl = fd.backdrop;
+                    Img.load(heroBack, fd.backdrop, S.px(1200));
+                }
+            });
+        });
     }
 
     // ---------------------------------------------------------------- butiran

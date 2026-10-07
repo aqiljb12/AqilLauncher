@@ -582,6 +582,7 @@ public class LiveTvActivity extends BaseActivity {
         FrameLayout.LayoutParams dlp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
         dlp.topMargin = dlp.rightMargin = S.px(60);
         root.addView(digits, dlp);
+        buildWheel(root);
 
         // ---- senarai saluran (kiri)
         panel = new FrameLayout(this);
@@ -751,17 +752,22 @@ public class LiveTvActivity extends BaseActivity {
      * auto=false (pilihan pengguna) mereset had langkau automatik; auto=true tidak.
      */
     private void select(int i, int delayMs, boolean auto) {
+        select(i, delayMs, auto, true);
+    }
+
+    private void select(int i, int delayMs, boolean auto, boolean info) {
         List<Channel> chs = Hub.channels;
         if (i < 0 || i >= chs.size()) return;
         if (!auto) skips = 0;
         pending = i;
-        showInfo(i);
+        if (info) showInfo(i);
         h.removeCallbacks(zap);
         if (delayMs <= 0) start(i);
         else h.postDelayed(zap, delayMs);
     }
 
     private void showInfo(int i) {
+        if (wheel != null && wheel.getVisibility() == View.VISIBLE) hideWheel(0);
         Channel c = Hub.channels.get(i);
         infoNum.setText(String.valueOf(i + 1));
         infoName.setText(c.name);
@@ -925,6 +931,7 @@ public class LiveTvActivity extends BaseActivity {
 
     private void start(int i) {
         if (i < 0 || i >= Hub.channels.size()) return;
+        if (wheel.getVisibility() == View.VISIBLE) hideWheel(2500);
         logSession();
         sessionStart = SystemClock.elapsedRealtime();
         stalls = 0;
@@ -1059,16 +1066,200 @@ public class LiveTvActivity extends BaseActivity {
         if (n == 0) return;
         lastStep = delta;
         int base = pending >= 0 ? pending : Math.max(index, 0);
-        select((base + delta + n) % n, 350, auto);
+        int target = (base + delta + n) % n;
+        if (auto) {
+            select(target, 350, true);
+            return;
+        }
+        showWheel(target, delta);
+        select(target, 700, false, false); // tukar hanya bila berhenti menekan
     }
 
     private void showPanel() {
+        hideWheel(0);
         panel.setVisibility(View.VISIBLE);
         panel.setAlpha(0f);
         panel.setTranslationX(-S.px(200));
         panel.animate().translationX(0).alpha(1f).setDuration(240).start();
         list.requestFocus();
         list.setSelection(Math.max(0, index));
+    }
+
+
+    // ---------------------------------------------------------------- roda saluran (atas / bawah)
+    //  Senarai menegak 5 saluran (nombor lebih tinggi di atas, jadi ATAS = saluran seterusnya, sepadan arah).
+    //  Saluran tengah: logo, nama, rancangan sekarang + bar kemajuan & seterusnya. Saluran hanya bertukar bila
+    //  pengguna berhenti menekan, jadi skrol laju tidak memuatkan setiap saluran (penting untuk akaun 1 sambungan).
+
+    private static final int WROW = 128, WROWS = 7; // 7 baris (±3) supaya baris masuk kelihatan semasa meluncur
+    private FrameLayout wheel, wheelRows;
+    private final ImageView[] wLogo = new ImageView[WROWS];
+    private final TextView[] wName = new TextView[WROWS], wSub = new TextView[WROWS];
+    private TextView wNext;
+    private View wTrack, wBar;
+    private int wheelSel = -1;
+    private boolean eatBackUp;
+    private static final java.util.Map<Integer, List<Xtream.Prog>> EPG_CACHE = new java.util.HashMap<>();
+    private static final java.util.Map<Integer, Long> EPG_AT = new java.util.HashMap<>();
+
+    private final Runnable wheelHideNow = new Runnable() {
+        @Override
+        public void run() {
+            wheel.animate().alpha(0f).translationX(-S.px(50)).setDuration(260).withEndAction(new Runnable() {
+                @Override
+                public void run() {
+                    wheel.setVisibility(View.GONE);
+                }
+            }).start();
+        }
+    };
+    private final Runnable wheelEpg = new Runnable() {
+        @Override
+        public void run() {
+            loadWheelEpg();
+        }
+    };
+
+    private void buildWheel(FrameLayout root) {
+        wheel = new FrameLayout(this);
+        Ui.noClip(wheel);
+        wheel.setVisibility(View.GONE);
+        View bg = new View(this);
+        bg.setBackground(Ui.grad(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT, 0, 0xE6070910, 0xB0070910, 0x00070910));
+        wheel.addView(bg, new FrameLayout.LayoutParams(S.px(980), -1));
+        View hl = new View(this); // sorotan tetap di tengah; baris meluncur di bawahnya
+        hl.setBackground(Ui.selected(S.px(28)));
+        wheel.addView(hl, Ui.at(46, 476 - WROW / 2f - 8, 760, WROW + 16));
+        wheelRows = new FrameLayout(this);
+        Ui.noClip(wheelRows);
+        wheel.addView(wheelRows, Ui.at(46, 476 - WROW / 2f - 3 * WROW, 760, WROWS * WROW));
+        for (int r = 0; r < WROWS; r++) {
+            FrameLayout row = new FrameLayout(this);
+            Ui.noClip(row);
+            ImageView logo = new ImageView(this);
+            logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            row.addView(logo, Ui.at(24, 22, 120, 76));
+            TextView name = Ui.text(this, "", r == 3 ? 34 : 28, Ui.WHITE, Ui.BOLD);
+            row.addView(name, Ui.at(168, r == 3 ? 14 : 24, 570, -2));
+            TextView sub = Ui.text(this, "", 22, r == 3 ? 0xFFE6ECFF : Ui.DIM, Ui.MEDIUM);
+            row.addView(sub, Ui.at(170, r == 3 ? 60 : 68, 570, -2));
+            int off = Math.abs(r - 3);
+            row.setAlpha(off == 0 ? 1f : off == 1 ? 0.72f : off == 2 ? 0.42f : 0.12f);
+            if (r == 3) {
+                wTrack = new View(this);
+                wTrack.setBackground(Ui.solid(0x44FFFFFF, S.px(3)));
+                row.addView(wTrack, Ui.at(170, 96, 400, 5));
+                wBar = new View(this);
+                wBar.setBackground(Ui.solid(0xFF64B5FF, S.px(3)));
+                row.addView(wBar, Ui.at(170, 96, 0, 5));
+                wNext = Ui.text(this, "", 19, Ui.DIM, Ui.MEDIUM);
+                row.addView(wNext, Ui.at(588, 86, 160, -2));
+            }
+            wLogo[r] = logo;
+            wName[r] = name;
+            wSub[r] = sub;
+            wheelRows.addView(row, Ui.at(0, r * WROW, 760, WROW));
+        }
+        TextView hint = Ui.text(this, "▲ ▼  pilih   •   berhenti = tonton   •   OK = senarai penuh", 20, Ui.FAINT, Ui.MEDIUM);
+        wheel.addView(hint, Ui.at(70, 990, 760, -2));
+        root.addView(wheel, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void showWheel(int sel, int delta) {
+        List<Channel> chs = Hub.channels;
+        int n = chs.size();
+        if (n == 0) return;
+        boolean wasVisible = wheel.getVisibility() == View.VISIBLE && wheel.getAlpha() > 0.5f;
+        wheelSel = sel;
+        for (int r = 0; r < WROWS; r++) {
+            int idx = ((sel + 3 - r) % n + n) % n;
+            Channel c = chs.get(idx);
+            wName[r].setText((idx + 1) + "   " + c.name);
+            wSub[r].setText(c.group);
+            Img.load(wLogo[r], c.logo, S.px(120));
+        }
+        wNext.setText("");
+        wTrack.setVisibility(View.GONE);
+        wBar.setVisibility(View.GONE);
+        h.removeCallbacks(wheelHideNow);
+        h.postDelayed(wheelHideNow, 5000); // jaga-jaga jika saluran tidak bermula
+        if (!wasVisible) {
+            info.animate().alpha(0f).setDuration(150).start(); // roda menggantikan kotak info semasa memilih
+            diag.animate().alpha(0f).setDuration(150).start();
+            wheel.animate().cancel();
+            wheel.setVisibility(View.VISIBLE);
+            wheel.setAlpha(0f);
+            wheel.setTranslationX(-S.px(50));
+            wheel.animate().alpha(1f).translationX(0).setDuration(220).start();
+            wheelRows.setTranslationY(0);
+        } else {
+            // ATAS (+1): saluran di atas turun ke tengah; BAWAH: naik
+            wheelRows.animate().cancel();
+            wheelRows.setTranslationY(delta > 0 ? -S.px(WROW) : S.px(WROW));
+            wheelRows.animate().translationY(0).setDuration(170).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        }
+        h.removeCallbacks(wheelEpg);
+        h.postDelayed(wheelEpg, 260);
+    }
+
+    private void hideWheel(long delayMs) {
+        h.removeCallbacks(wheelHideNow);
+        if (delayMs <= 0) {
+            wheel.animate().cancel();
+            wheel.setVisibility(View.GONE);
+        } else {
+            h.postDelayed(wheelHideNow, delayMs);
+        }
+    }
+
+    private void loadWheelEpg() {
+        final int sel = wheelSel;
+        if (sel < 0 || sel >= Hub.channels.size()) return;
+        final Channel c = Hub.channels.get(sel);
+        if (c.xtId == 0) return;
+        synchronized (EPG_CACHE) {
+            Long at = EPG_AT.get(c.xtId);
+            if (at != null && System.currentTimeMillis() - at < 10 * 60_000L) {
+                showWheelEpg(EPG_CACHE.get(c.xtId));
+                return;
+            }
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final List<Xtream.Prog> l = Xtream.epg(LiveTvActivity.this, c, 3);
+                synchronized (EPG_CACHE) {
+                    EPG_CACHE.put(c.xtId, l);
+                    EPG_AT.put(c.xtId, System.currentTimeMillis());
+                }
+                h.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (started && wheelSel == sel) showWheelEpg(l);
+                    }
+                });
+            }
+        }, "wheel-epg").start();
+    }
+
+    private void showWheelEpg(List<Xtream.Prog> l) {
+        if (l == null || l.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        Xtream.Prog cur = null, next = null;
+        for (Xtream.Prog p : l) {
+            if (p.start <= now && p.end > now) cur = p;
+            else if (p.start > now && (next == null || p.start < next.start)) next = p;
+        }
+        if (cur != null) {
+            wSub[3].setText("Sekarang   " + cur.title);
+            float f = Math.max(0f, Math.min(1f, (now - cur.start) / (float) Math.max(1, cur.end - cur.start)));
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) wBar.getLayoutParams();
+            lp.width = Math.round(S.px(400) * f);
+            wBar.setLayoutParams(lp);
+            wTrack.setVisibility(View.VISIBLE);
+            wBar.setVisibility(View.VISIBLE);
+        }
+        if (next != null) wNext.setText(next.hhmm(next.start) + "  " + next.title);
     }
 
     private void hidePanel() {
@@ -1098,6 +1289,14 @@ public class LiveTvActivity extends BaseActivity {
                 h.postDelayed(digitGo, 1500);
                 return true;
             }
+            if (!panelOpen && k == KeyEvent.KEYCODE_BACK && wheel.getVisibility() == View.VISIBLE) {
+                // batal: kekal pada saluran yang sedang dimainkan
+                h.removeCallbacks(zap);
+                pending = -1;
+                hideWheel(0);
+                eatBackUp = true;
+                return true;
+            }
             if (!panelOpen) {
                 if (k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_CHANNEL_UP) {
                     step(1, false);
@@ -1121,7 +1320,10 @@ public class LiveTvActivity extends BaseActivity {
                 return true;
             }
         }
-        if (e.getAction() == KeyEvent.ACTION_UP && k == KeyEvent.KEYCODE_BACK && panelOpen) return true;
+        if (e.getAction() == KeyEvent.ACTION_UP && k == KeyEvent.KEYCODE_BACK && (panelOpen || eatBackUp)) {
+            eatBackUp = false;
+            return true;
+        }
         return super.dispatchKeyEvent(e);
     }
 
