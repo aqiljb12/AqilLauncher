@@ -189,21 +189,10 @@ public class MainActivity extends BaseActivity {
         root.addView(v, Ui.at(x, y, w, h));
     }
 
-    @Override
-    protected void onStart() {
-        super.onStart();
-        stopped = false;
-        updateHold();
-    }
-
-    @Override
-    protected void onStop() {
-        stopped = true;
-        updateHold(); // lepaskan dekoder wallpaper video semasa Live TV / apl lain di depan
-        super.onStop();
-    }
-
-    /** Wallpaper berhenti (video dilepas) di halaman berat & bila launcher tidak kelihatan. */
+    /**
+     * Wallpaper berhenti (video dilepas) di halaman berat & bila launcher tidak di depan. Dilepas pada onPause (bukan
+     * onStop) supaya dekoder perkakasan sudah bebas SEBELUM Live TV / pemain filem mula menyediakan videonya.
+     */
     private void updateHold() {
         wall.setHold(stopped || "live".equals(current) || "movies".equals(current));
     }
@@ -221,6 +210,8 @@ public class MainActivity extends BaseActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        stopped = false;
+        updateHold();
         wall.resume();
         perfWatch = Perf.watch(this);
         Hub.applyPending(); // senarai saluran baharu dari kemas kini latar
@@ -250,6 +241,8 @@ public class MainActivity extends BaseActivity {
     protected void onPause() {
         Perf.unwatch(this, perfWatch);
         perfWatch = null;
+        stopped = true;
+        updateHold(); // lepaskan dekoder wallpaper video sebelum Live TV / apl lain bermula
         wall.pause();
         Page p = current == null ? null : pages.get(current);
         if (p != null) p.onPause();

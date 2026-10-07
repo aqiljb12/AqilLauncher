@@ -519,7 +519,12 @@ final class RemoteServer {
                 return Res.ok();
             }
             case "/api/playlist": return playlist(r.json().optString("url").trim());
-            case "/api/log": return Res.json(obj("log", App.lastCrash()));
+            case "/api/log": {
+                String crash = App.lastCrash(), play = Hub.playLogText();
+                String all = (crash.isEmpty() ? "" : "=== Ralat terakhir ===\n" + crash + "\n\n")
+                        + (play.isEmpty() ? "" : "=== Laporan Live TV (terkini dahulu) ===\n" + play);
+                return Res.json(obj("log", all));
+            }
             case "/api/probe": {
                 if (Store.xtream(ctx) != null) return Res.result("Semakan dimatikan untuk akaun IPTV (elak had sambungan).");
                 Hub.probe(null);

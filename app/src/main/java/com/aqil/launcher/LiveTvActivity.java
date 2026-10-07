@@ -31,6 +31,7 @@ import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DecoderCounters;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
 
 import java.util.List;
@@ -76,6 +77,7 @@ public class LiveTvActivity extends BaseActivity {
         @Override
         public void run() {
             info.animate().alpha(0f).translationY(S.px(30)).setDuration(400).start();
+            diag.animate().alpha(0f).setDuration(400).start();
         }
     };
     private final Runnable zap = new Runnable() {
@@ -169,7 +171,7 @@ public class LiveTvActivity extends BaseActivity {
             probeFrames = -1;
             if (dt < 2000 || df < 20) return;
             fpsDone = true;
-            matchRefreshRate(snapFps(df * 1000f / dt / Math.max(0.5f, player.getPlaybackParameters().speed)));
+            onFps(snapFps(df * 1000f / dt / Math.max(0.5f, player.getPlaybackParameters().speed)));
         }
     };
 
@@ -195,9 +197,16 @@ public class LiveTvActivity extends BaseActivity {
     private void tunnelFallback() {
         Perf.tunnelFailed(this);
         tunnelOff = true; // sesi ini terus guna mod biasa
+        rebuildPlayer();
+    }
+
+    /** Bina semula pemain & sambung saluran semasa (dekoder baharu). */
+    private void rebuildPlayer() {
         h.removeCallbacks(tunnelCheck);
         h.removeCallbacks(fpsProbe);
         h.removeCallbacks(stable);
+        h.removeCallbacks(cushionTick);
+        h.removeCallbacks(swRetry);
         if (player != null) {
             player.release();
             player = null;
@@ -208,6 +217,153 @@ public class LiveTvActivity extends BaseActivity {
             play(Hub.channels.get(index), triedHls ? MimeTypes.APPLICATION_M3U8 : null);
     }
 
+    // ---- statistik strim (dipapar bersama info saluran) & laporan sesi untuk telefon (Lagi › Laporan ralat)
+    private TextView diag;
+    private String decoderName = "";
+    private float streamFps = -1;
+    private int stalls, droppedBase;
+    private long stallMs, stallSince, sessionStart;
+    private boolean wasReady, progressive, swRetried;
+    /** Dekoder perisian yang sudah dicuba semula dan masih perisian (cth format tidak disokong cip) – jangan ulang. */
+    private final java.util.Set<String> swKnown = new java.util.HashSet<>();
+
+    /**
+     * Dekoder perisian (CPU) dipilih walaupun TV ada dekoder perkakasan – biasanya kerana dekoder perkakasan sedang
+     * dipegang sekejap (pratonton / wallpaper video). Bina semula pemain sekali untuk dapatkan dekoder perkakasan.
+     */
+    private final Runnable swRetry = new Runnable() {
+        @Override
+        public void run() {
+            if (started && player != null && Perf.isSoftware(decoderName)) rebuildPlayer();
+        }
+    };
+
+    private void onDecoder(String name) {
+        decoderName = name == null ? "" : name;
+        androidx.media3.common.Format f = player == null ? null : player.getVideoFormat();
+        String mime = f == null ? null : f.sampleMimeType;
+        if (!Perf.isSoftware(decoderName) || mime == null) return;
+        String key = mime + "/" + f.height;
+        if (swRetried) {
+            swKnown.add(key); // sudah dicuba: format ini memang perlu dekoder perisian pada TV ini
+            Hub.playLog("Dekoder perisian digunakan (" + decoderName + ", " + mime + " " + f.width + "x" + f.height + ")");
+            return;
+        }
+        if (swKnown.contains(key) || !Perf.hwDecoder(mime)) return;
+        swRetried = true;
+        h.removeCallbacks(swRetry);
+        h.postDelayed(swRetry, 1200);
+    }
+
+    private void onFps(float fps) {
+        streamFps = fps;
+        matchRefreshRate(fps);
+    }
+
+    private int dropped() {
+        DecoderCounters dc = player == null ? null : player.getVideoDecoderCounters();
+        if (dc == null) return 0;
+        dc.ensureUpdated();
+        return dc.droppedBufferCount;
+    }
+
+    private long stallTotal() {
+        return stallMs + (stallSince > 0 ? SystemClock.elapsedRealtime() - stallSince : 0);
+    }
+
+    private String diagText() {
+        if (player == null) return "";
+        java.util.Locale L = java.util.Locale.ROOT;
+        androidx.media3.common.Format f = player.getVideoFormat();
+        float hz = 0;
+        try {
+            hz = getWindowManager().getDefaultDisplay().getRefreshRate();
+        } catch (RuntimeException ignored) {
+        }
+        StringBuilder sb = new StringBuilder("STATISTIK STRIM\n");
+        sb.append("Video  ").append(f == null || f.width <= 0 ? "–" : f.width + "×" + f.height)
+                .append(streamFps > 0 ? "  •  " + String.format(L, streamFps % 1 == 0 ? "%.0f" : "%.2f", streamFps) + " fps" : "")
+                .append("  →  skrin ").append(Math.round(hz)).append("Hz\n");
+        sb.append("Dekoder  ").append(decoderName.isEmpty() ? "–" : (Perf.isSoftware(decoderName) ? "PERISIAN (berat)" : "perkakasan"))
+                .append(tunnelOn ? " + tunneling" : "").append('\n');
+        if (!decoderName.isEmpty()) sb.append("   ").append(decoderName).append('\n');
+        long bps = Streams.bitrateEstimate();
+        sb.append("Penimbal  ").append(player.getTotalBufferedDuration() / 1000).append("s  •  muat turun ")
+                .append(bps > 0 ? String.format(L, "%.1f", bps / 1e6) + " Mbps" : "–").append('\n');
+        sb.append("Tersekat  ").append(stalls).append("×");
+        if (stalls > 0) sb.append(" (").append(stallTotal() / 1000).append("s)");
+        sb.append("  •  bingkai hilang ").append(Math.max(0, dropped() - droppedBase));
+        if (cushionTarget > 0) sb.append("\nPenimbal tambahan  ").append(cushionTarget / 1000).append("s (server/Internet goyang)");
+        return sb.toString();
+    }
+
+    /** Ringkasan sesi saluran ke laporan telefon – supaya punca "lag" boleh dikenal pasti dari data sebenar. */
+    private void logSession() {
+        if (sessionStart == 0 || index < 0 || index >= Hub.channels.size()) return;
+        long mins = (SystemClock.elapsedRealtime() - sessionStart) / 60000;
+        sessionStart = 0;
+        if (mins < 1 && stalls == 0) return;
+        androidx.media3.common.Format f = player == null ? null : player.getVideoFormat();
+        long bps = Streams.bitrateEstimate();
+        Hub.playLog(Hub.channels.get(index).name + " • " + mins + " min • "
+                + (f == null || f.width <= 0 ? "?" : f.width + "x" + f.height)
+                + (streamFps > 0 ? " " + Math.round(streamFps) + "fps" : "")
+                + " → skrin " + Math.round(getWindowManager().getDefaultDisplay().getRefreshRate()) + "Hz • "
+                + (decoderName.isEmpty() ? "dekoder ?" : (Perf.isSoftware(decoderName) ? "PERISIAN " : "HW ") + decoderName)
+                + (tunnelOn ? " +tunneling" : "") + " • tersekat " + stalls + "x (" + stallTotal() / 1000 + "s) • hilang "
+                + Math.max(0, dropped() - droppedBase) + " bingkai • " + (bps > 0 ? String.format(java.util.Locale.ROOT, "%.1f", bps / 1e6) : "?")
+                + " Mbps" + (cushionTarget > 0 ? " • penimbal tambahan " + cushionTarget / 1000 + "s" : ""));
+    }
+
+    // ---- penimbal adaptif: strim TS langsung yang tersekat berulang kali → jeda sebentar untuk kumpul penimbal lebih
+    //      (server menghantar pada kelajuan masa nyata, jadi setiap saat jeda = 1 saat tambahan tahan goyang)
+    private int cushionTarget;
+    private long cushionSince;
+    private boolean cushioning;
+
+    private final Runnable cushionTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!started || player == null || !cushioning) return;
+            long buf = player.getTotalBufferedDuration();
+            long waited = SystemClock.elapsedRealtime() - cushionSince;
+            if (buf >= cushionTarget || waited > cushionTarget + 4000 || player.getPlaybackState() != Player.STATE_READY) {
+                endCushion();
+                return;
+            }
+            status.setText("Server/Internet tidak stabil – menimbal lebih supaya tidak tersekat lagi…  "
+                    + buf / 1000 + " / " + cushionTarget / 1000 + "s");
+            h.postDelayed(this, 500);
+        }
+    };
+
+    private void maybeCushion() {
+        if (!progressive || !Store.smooth(this) || stalls < 2 || player == null) return;
+        cushionTarget = (int) Math.min(24000, 6000L * stalls); // tersekat ke-2 → 12s, ke-3 → 18s, seterusnya 24s
+        if (player.getTotalBufferedDuration() >= cushionTarget) return;
+        cushioning = true;
+        cushionSince = SystemClock.elapsedRealtime();
+        player.setPlayWhenReady(false); // pemuatan diteruskan semasa dijeda → penimbal bertambah
+        spinner.setVisibility(View.VISIBLE);
+        h.removeCallbacks(cushionTick);
+        h.post(cushionTick);
+    }
+
+    private final Runnable cushionCheck = new Runnable() {
+        @Override
+        public void run() {
+            if (started && !cushioning) maybeCushion();
+        }
+    };
+
+    private void endCushion() {
+        cushioning = false;
+        h.removeCallbacks(cushionTick);
+        status.setText("");
+        spinner.setVisibility(View.GONE);
+        if (player != null) player.setPlayWhenReady(true);
+    }
+
     private final Runnable statsTick = new Runnable() {
         @Override
         public void run() {
@@ -215,6 +371,7 @@ public class LiveTvActivity extends BaseActivity {
             long buf = player.getTotalBufferedDuration() / 1000;
             long bps = Streams.bitrateEstimate();
             netLabel.setText("Penimbal " + buf + "s" + (bps > 0 ? "  •  " + String.format(java.util.Locale.ROOT, "%.1f", bps / 1e6) + " Mbps" : ""));
+            diag.setText(diagText());
             if (info.getAlpha() > 0.01f) h.postDelayed(this, 1000);
         }
     };
@@ -323,6 +480,17 @@ public class LiveTvActivity extends BaseActivity {
         info.setAlpha(0f);
         root.addView(info, ilp);
 
+        // ---- statistik strim (atas kanan, bersama info saluran): bantu kenal pasti punca tersekat / patah-patah
+        diag = Ui.text(this, "", 20, Ui.WHITE, Ui.MEDIUM);
+        diag.setSingleLine(false);
+        diag.setLineSpacing(S.px(5), 1f);
+        diag.setBackground(Ui.glass(S.px(24)));
+        diag.setPadding(S.px(26), S.px(18), S.px(26), S.px(18));
+        diag.setAlpha(0f);
+        FrameLayout.LayoutParams glp = new FrameLayout.LayoutParams(S.px(660), -2, Gravity.TOP | Gravity.END);
+        glp.topMargin = glp.rightMargin = S.px(60);
+        root.addView(diag, glp);
+
         digits = Ui.text(this, "", 80, Ui.WHITE, Ui.BOLD);
         digits.setBackground(Ui.glass(S.px(24)));
         digits.setPadding(S.px(30), S.px(10), S.px(30), S.px(10));
@@ -380,6 +548,12 @@ public class LiveTvActivity extends BaseActivity {
         tunnelOn = !tunnelOff && Perf.tunnel(this);
         player = Streams.player(this, false, tunnelOn);
         player.setVideoSurfaceView(surface);
+        player.addAnalyticsListener(new AnalyticsListener() {
+            @Override
+            public void onVideoDecoderInitialized(AnalyticsListener.EventTime t, String name, long initializedMs, long durationMs) {
+                onDecoder(name);
+            }
+        });
         player.setVideoFrameMetadataListener(new VideoFrameMetadataListener() {
             @Override
             public void onVideoFrameAboutToBeRendered(long presentationTimeUs, long releaseTimeNs,
@@ -397,7 +571,7 @@ public class LiveTvActivity extends BaseActivity {
                     h.post(new Runnable() {
                         @Override
                         public void run() {
-                            matchRefreshRate(fps);
+                            onFps(fps);
                         }
                     });
                 }
@@ -406,6 +580,16 @@ public class LiveTvActivity extends BaseActivity {
         player.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int state) {
+                long now = SystemClock.elapsedRealtime();
+                if (state == Player.STATE_BUFFERING && wasReady) { // sedang main lalu tersekat
+                    stalls++;
+                    stallSince = now;
+                } else if (state != Player.STATE_BUFFERING && stallSince > 0) {
+                    stallMs += now - stallSince;
+                    stallSince = 0;
+                    if (state == Player.STATE_READY) h.post(cushionCheck);
+                }
+                wasReady = state == Player.STATE_READY;
                 if (state == Player.STATE_BUFFERING) {
                     if (bufferingSince == 0) bufferingSince = System.currentTimeMillis();
                     spinner.setVisibility(View.VISIBLE);
@@ -507,6 +691,9 @@ public class LiveTvActivity extends BaseActivity {
         info.animate().cancel();
         info.setAlpha(1f);
         info.setTranslationY(0);
+        diag.animate().cancel();
+        diag.setText(diagText());
+        diag.setAlpha(1f);
         h.removeCallbacks(hideInfo);
         h.postDelayed(hideInfo, 4500);
         h.removeCallbacks(statsTick);
@@ -611,6 +798,13 @@ public class LiveTvActivity extends BaseActivity {
 
     private void start(int i) {
         if (i < 0 || i >= Hub.channels.size()) return;
+        logSession();
+        sessionStart = SystemClock.elapsedRealtime();
+        stalls = 0;
+        stallMs = 0;
+        streamFps = -1;
+        cushionTarget = 0;
+        swRetried = false;
         resLabel.setVisibility(View.GONE);
         frameCount = 0;
         fpsDone = false;
@@ -633,6 +827,14 @@ public class LiveTvActivity extends BaseActivity {
         playTicks = 0;
         frozenTicks = 0;
         lastFrames = -1;
+        wasReady = false; // prepare semula bukan "tersekat"
+        stallSince = 0;
+        cushioning = false;
+        h.removeCallbacks(cushionTick);
+        decoderName = "";
+        droppedBase = 0;
+        String low = c.url.toLowerCase(java.util.Locale.ROOT);
+        progressive = forceMime == null && c.drmType == null && !low.contains("m3u8") && !low.contains(".mpd");
         try {
             player.setMediaSource(Streams.source(this, c, forceMime));
             player.prepare();
@@ -793,6 +995,9 @@ public class LiveTvActivity extends BaseActivity {
         started = true;
         fpsDone = false; // kesan semula & minta mod paparan bila kembali
         frameCount = 0;
+        sessionStart = SystemClock.elapsedRealtime();
+        stalls = 0;
+        stallMs = 0;
         h.removeCallbacks(watchdog); // elak watchdog berganda selepas jeda/sambung berulang
         h.postDelayed(watchdog, 3000);
         h.postDelayed(hideInfo, 4500);
@@ -812,6 +1017,7 @@ public class LiveTvActivity extends BaseActivity {
 
     @Override
     protected void onStop() {
+        logSession();
         started = false;
         // Batal SEMUA panggilan tertangguh (watchdog, zap, cuba semula, langkau, nombor, sembunyi info)
         h.removeCallbacksAndMessages(null);

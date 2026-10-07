@@ -185,10 +185,41 @@ final class Perf {
 
     // ---------------------------------------------------------------- tunneling video
 
-    /** Cuba tunneling untuk Live TV? Hanya jika cip menyokong & belum terbukti gagal pada TV ini. */
+    /**
+     * Cuba tunneling untuk Live TV? Hanya pada TV tahap Ringan (CPU lemah – di situ ia membantu), jika cip menyokong
+     * & belum terbukti gagal. TV yang cukup laju guna mod biasa: apl kawal masa bingkai & padanan kadar segar skrin
+     * dengan tepat, jadi gerakan lebih licin.
+     */
     static boolean tunnel(Context c) {
-        tier(c); // pastikan hasil lama dari versi lain sudah ditetapkan semula
-        return Build.VERSION.SDK_INT >= 23 && Store.tunnel(c) >= 0 && tunnelHw();
+        return tier(c) <= LOW && Build.VERSION.SDK_INT >= 23 && Store.tunnel(c) >= 0 && tunnelHw();
+    }
+
+    /** Nama dekoder perisian (CPU) – perlahan untuk HD pada kebanyakan TV. */
+    static boolean isSoftware(String name) {
+        if (name == null || name.isEmpty()) return false;
+        String l = name.toLowerCase(java.util.Locale.ROOT);
+        return l.startsWith("omx.google.") || l.startsWith("c2.android.") || l.startsWith("c2.google.")
+                || l.contains("ffmpeg") || l.contains(".sw.");
+    }
+
+    private static final java.util.Map<String, Boolean> HW = new java.util.HashMap<>();
+
+    /** Adakah TV ini ada dekoder perkakasan untuk jenis video ini? */
+    static synchronized boolean hwDecoder(String mime) {
+        Boolean v = HW.get(mime);
+        if (v == null) {
+            v = false;
+            try {
+                for (MediaCodecInfo i : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+                    if (i.isEncoder() || isSoftware(i.getName())) continue;
+                    if (Build.VERSION.SDK_INT >= 29 && i.isSoftwareOnly()) continue;
+                    for (String t : i.getSupportedTypes()) if (t.equalsIgnoreCase(mime)) v = true;
+                }
+            } catch (Throwable ignored) {
+            }
+            HW.put(mime, v);
+        }
+        return v;
     }
 
     /** Satu saluran main stabil dalam mod tunneling; selepas 3 kali TV ini dikira serasi. */
@@ -206,6 +237,7 @@ final class Perf {
 
     static String tunnelName(Context c) {
         if (Build.VERSION.SDK_INT < 23 || !tunnelHw()) return "tidak disokong TV ini";
+        if (tier(c) > LOW) return "tidak perlu (TV ini cukup laju)";
         int s = Store.tunnel(c);
         return s > 0 ? "aktif" : s < 0 ? "dimatikan (tidak serasi)" : "sedang diuji";
     }

@@ -127,7 +127,8 @@ final class Hub {
 
     /** Cache senarai lebih 12 jam → muat turun di latar tanpa ganggu paparan (cuba paling kerap 30 minit sekali). */
     static void refreshIfStale() {
-        if (refreshing || channels.isEmpty() || app == null) return;
+        // jangan muat turun/hurai senarai besar semasa siaran sedang dimainkan (CPU & Internet untuk video dulu)
+        if (refreshing || channels.isEmpty() || app == null || playing >= 0) return;
         long now = System.currentTimeMillis();
         if (now - lastRefreshTry < 30 * 60_000L) return;
         File f = new File(app.getFilesDir(), Store.xtream(app) != null ? "xtream.json" : "playlist.m3u");
@@ -367,6 +368,53 @@ final class Hub {
     }
 
     // ---------- gambar ----------
+
+    // ---------- laporan Live TV (telefon › Lagi › Laporan ralat) ----------
+
+    private static final java.util.concurrent.ExecutorService LOGIO = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /** Tambah satu baris (bertarikh) ke laporan Live TV; simpan 40 baris terakhir. */
+    static void playLog(String line) {
+        if (app == null) return;
+        final String l = new java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.ROOT).format(new java.util.Date())
+                + "  " + line.replace('\n', ' ');
+        LOGIO.execute(new Runnable() {
+            @Override
+            public void run() {
+                File f = new File(app.getFilesDir(), "playlog.txt");
+                List<String> lines = new ArrayList<>();
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"))) {
+                    String s;
+                    while ((s = r.readLine()) != null) lines.add(s);
+                } catch (Exception ignored) {
+                }
+                lines.add(l);
+                while (lines.size() > 40) lines.remove(0);
+                try (OutputStream o = new FileOutputStream(f)) {
+                    StringBuilder sb = new StringBuilder();
+                    for (String s : lines) sb.append(s).append('\n');
+                    o.write(sb.toString().getBytes("UTF-8"));
+                } catch (Exception ignored) {
+                }
+            }
+        });
+    }
+
+    /** Laporan Live TV, terkini dahulu ("" jika tiada). */
+    static String playLogText() {
+        if (app == null) return "";
+        File f = new File(app.getFilesDir(), "playlog.txt");
+        List<String> lines = new ArrayList<>();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"))) {
+            String s;
+            while ((s = r.readLine()) != null) lines.add(s);
+        } catch (Exception ignored) {
+        }
+        Collections.reverse(lines);
+        StringBuilder sb = new StringBuilder();
+        for (String s : lines) sb.append(s).append("\n\n");
+        return sb.toString().trim();
+    }
 
     static File imagesDir() {
         File d = new File(app.getFilesDir(), "images");

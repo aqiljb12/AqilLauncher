@@ -89,6 +89,10 @@ final class Streams {
         DefaultMediaSourceFactory msf = new DefaultMediaSourceFactory(ctx).setDataSourceFactory(http);
 
         MediaItem.Builder mb = new MediaItem.Builder().setUri(c.url);
+        // Siaran langsung (HLS/DASH): kelajuan main tetap 1.0x. Secara lalai ExoPlayer laju/perlahankan 0.97–1.03x untuk
+        // kejar "live edge" – pada skrin 50Hz itu bermakna bingkai dilangkau/diulang setiap saat (gerakan tersentak).
+        // Tiada kesan untuk VOD / strim TS.
+        mb.setLiveConfiguration(new MediaItem.LiveConfiguration.Builder().setMinPlaybackSpeed(1f).setMaxPlaybackSpeed(1f).build());
         String low = c.url.toLowerCase(Locale.ROOT);
         String mime = forceMime;
         if (mime == null) {
