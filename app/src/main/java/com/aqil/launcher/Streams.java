@@ -83,8 +83,10 @@ final class Streams {
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
                 .setUserAgent(c.ua != null ? c.ua : Hub.UA)
                 .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(12000)
-                .setReadTimeoutMs(15000)
+                .setConnectTimeoutMs(10000)
+                // siaran langsung menghantar data berterusan: 8s tanpa sebarang bait = sambungan mati → sambung semula
+                // lebih awal. Filem/siri (server VOD kadang lambat mula selepas lompat) diberi 20s.
+                .setReadTimeoutMs(c.url.contains("/movie/") || c.url.contains("/series/") ? 20000 : 8000)
                 .setDefaultRequestProperties(headers);
         DefaultMediaSourceFactory msf = new DefaultMediaSourceFactory(ctx).setDataSourceFactory(http);
 

@@ -242,6 +242,19 @@ final class Xtream {
         }
     }
 
+    /** {aktif, maksimum} sambungan akaun sekarang, atau null. Panggil di thread latar (tidak guna slot strim). */
+    static int[] connections(Context c) {
+        String[] x = Store.xtream(c);
+        if (x == null) return null;
+        try {
+            JSONObject ui = new JSONObject(get(api(x, null))).optJSONObject("user_info");
+            if (ui == null) return null;
+            return new int[]{ui.optInt("active_cons", 0), ui.optInt("max_connections", 0)};
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     static String summary() {
         if (user.isEmpty()) return "Akaun IPTV";
         return user + " @ " + server + "  •  " + (status.isEmpty() ? "?" : status) + "  •  tamat " + expiry

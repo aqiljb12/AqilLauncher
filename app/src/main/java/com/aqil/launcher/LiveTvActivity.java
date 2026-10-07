@@ -103,6 +103,8 @@ public class LiveTvActivity extends BaseActivity {
                 skips = 0;
                 retries = 0;
                 resyncs = 0;
+                recoveries = 0;
+                accountFull = false;
                 if (tunnelOn && firstFrame) Perf.tunnelOk(LiveTvActivity.this);
             }
         }
@@ -284,6 +286,7 @@ public class LiveTvActivity extends BaseActivity {
         sb.append("Video  ").append(f == null || f.width <= 0 ? "–" : f.width + "×" + f.height)
                 .append(streamFps > 0 ? "  •  " + String.format(L, streamFps % 1 == 0 ? "%.0f" : "%.2f", streamFps) + " fps" : "")
                 .append("  →  skrin ").append(Math.round(hz)).append("Hz\n");
+        if (!modeNote.isEmpty()) sb.append("   ").append(modeNote).append('\n');
         sb.append("Dekoder  ").append(decoderName.isEmpty() ? "–" : (Perf.isSoftware(decoderName) ? "PERISIAN (berat)" : "perkakasan"))
                 .append(tunnelOn ? " + tunneling" : "").append('\n');
         if (!decoderName.isEmpty()) sb.append("   ").append(decoderName).append('\n');
@@ -396,25 +399,106 @@ public class LiveTvActivity extends BaseActivity {
             }, "epg").start();
         }
     };
+    /**
+     * Siaran tidak sampai (penimbal kosong & tidak bertambah): sambung semula dengan betul – TIDAK pernah berhenti
+     * mencuba selagi saluran ini ditonton. Mula-mula selepas 10s, kemudian setiap 15s, selepas 6 kali setiap 30s.
+     */
     private final Runnable watchdog = new Runnable() {
         @Override
         public void run() {
             if (!started || player == null) return; // jangan sentuh main balik bila apl lain di depan
-            if (player.getPlaybackState() == Player.STATE_BUFFERING && bufferingSince > 0
-                    && System.currentTimeMillis() - bufferingSince > 15000) {
-                bufferingSince = System.currentTimeMillis();
-                if (resyncs < MAX_RESYNCS) {
-                    // tersekat terlalu lama: sambung semula ke hujung siaran langsung (terhad)
-                    resyncs++;
-                    player.seekToDefaultPosition();
-                    player.prepare();
-                } else {
-                    status.setText("Siaran tersekat. Tekan atas/bawah untuk saluran lain.");
+            if (player.getPlaybackState() == Player.STATE_BUFFERING && bufferingSince > 0 && !reconnecting) {
+                long stuck = System.currentTimeMillis() - bufferingSince;
+                long limit = recoveries == 0 ? 10000 : recoveries < 6 ? 15000 : 30000;
+                if (stuck > limit && player.getTotalBufferedDuration() < 1500) {
+                    bufferingSince = System.currentTimeMillis();
+                    recover();
                 }
             }
-            h.postDelayed(this, 3000);
+            h.postDelayed(this, 2000);
         }
     };
+
+    private int recoveries;
+    private boolean reconnecting, altFormat, accountFull;
+
+    /**
+     * Pulih dari siaran yang terputus. Sambungan lama DITUTUP dulu (player.stop) dan tunggu sebentar sebelum sambung
+     * semula – akaun IPTV 1 sambungan menolak/menggantung sambungan kedua jika yang lama belum dilepaskan. Setiap
+     * cubaan ke-2, saluran akaun IPTV bertukar format TS ↔ HLS (HLS guna permintaan pendek, lebih tahan goyang).
+     */
+    private void recover() {
+        if (player == null || index < 0 || index >= Hub.channels.size()) return;
+        recoveries++;
+        final int idx = index;
+        final Channel c = Hub.channels.get(idx);
+        if (recoveries % 2 == 0 && altUrl(c) != null) altFormat = !altFormat;
+        reconnecting = true;
+        player.stop();
+        spinner.setVisibility(View.VISIBLE);
+        status.setText((recoveries == 1 ? "Siaran terputus – menyambung semula…"
+                : "Server tidak menghantar siaran – cubaan " + recoveries + (altFormat ? " (format HLS)" : ""))
+                + (accountFull ? "\nAkaun IPTV penuh – mungkin peranti lain sedang guna akaun ini." : "")
+                + "\nTekan atas/bawah untuk saluran lain");
+        Hub.playLog(c.name + " • siaran tidak sampai, sambung semula #" + recoveries + (altFormat ? " (HLS)" : ""));
+        long delay = recoveries == 1 ? 1500 : 3000;
+        if (recoveries == 3 && c.xtId != 0) {
+            delay = 5000; // beri ruang untuk semak bilangan sambungan akaun sebelum sambung semula
+            h.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    checkConnections(idx);
+                }
+            }, 1500);
+        }
+        h.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                reconnecting = false;
+                if (started && index == idx && pending < 0) play(c, triedHls ? MimeTypes.APPLICATION_M3U8 : null);
+            }
+        }, delay);
+    }
+
+    /** Semak berapa sambungan akaun sedang digunakan (bila sambungan kita sendiri sudah ditutup). */
+    private void checkConnections(final int idx) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final int[] cn = Xtream.connections(LiveTvActivity.this);
+                if (cn == null || cn[1] <= 0) return;
+                h.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!started || index != idx) return;
+                        Hub.playLog("Akaun IPTV: " + cn[0] + "/" + cn[1] + " sambungan aktif semasa siaran terputus");
+                        accountFull = cn[0] >= cn[1];
+                        if (accountFull) status.setText("Akaun IPTV penuh: " + cn[0] + "/" + cn[1] + " sambungan sedang digunakan.\n"
+                                + "Mungkin telefon / peranti lain sedang menonton dengan akaun ini. Apl terus mencuba…");
+                    }
+                });
+            }
+        }, "xt-cons").start();
+    }
+
+    /** URL format lain bagi saluran akaun IPTV (…/id.ts ↔ …/id.m3u8), atau null. */
+    private static String altUrl(Channel c) {
+        if (c.xtId == 0) return null;
+        if (c.url.endsWith(".ts")) return c.url.substring(0, c.url.length() - 3) + ".m3u8";
+        if (c.url.endsWith(".m3u8")) return c.url.substring(0, c.url.length() - 5) + ".ts";
+        return null;
+    }
+
+    private static Channel withUrl(Channel c, String url) {
+        Channel n = new Channel(c.name, url, c.group, c.logo);
+        n.ua = c.ua;
+        n.referer = c.referer;
+        n.origin = c.origin;
+        n.drmType = c.drmType;
+        n.drmKey = c.drmKey;
+        n.xtId = c.xtId;
+        return n;
+    }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -720,32 +804,75 @@ public class LiveTvActivity extends BaseActivity {
      * Dipulihkan bila keluar dari Live TV.
      */
     private void matchRefreshRate(float fps) {
-        if (!started || !Store.matchFps(this) || Build.VERSION.SDK_INT < 23 || fps < 10 || fps > 125) return;
+        if (!started || fps < 10 || fps > 125) return;
+        if (!Store.matchFps(this)) {
+            modeNote = "padanan Hz dimatikan di Tetapan";
+            return;
+        }
+        if (Build.VERSION.SDK_INT < 23) return;
         try {
             Display d = getWindowManager().getDefaultDisplay();
             Display.Mode cur = d.getMode();
-            if (isMultiple(cur.getRefreshRate(), fps)) return; // sudah lancar
-            Display.Mode best = null;
-            float bestScore = Float.MAX_VALUE;
-            for (Display.Mode m : d.getSupportedModes()) {
-                if (m.getPhysicalWidth() != cur.getPhysicalWidth() || m.getPhysicalHeight() != cur.getPhysicalHeight()) continue;
-                float r = m.getRefreshRate();
-                if (!isMultiple(r, fps)) continue;
-                float err = Math.abs(r - Math.round(r / fps) * fps);
-                // utamakan ≥48Hz, kemudian padanan paling tepat (24 utk 24fps), kemudian yang terendah (50 dari 100)
-                float score = (r < 47 ? 1000 : 0) + err * 100 + r * 0.01f;
-                if (score < bestScore) {
-                    bestScore = score;
-                    best = m;
-                }
+            if (isMultiple(cur.getRefreshRate(), fps)) {
+                modeNote = "";
+                return; // sudah lancar
             }
-            if (best == null) return;
+            // 1) resolusi sama;  2) jika tiada, resolusi lain ≥1080p (TV 4K yang hanya ada 50Hz pada 1080p dsb.)
+            Display.Mode best = pickMode(d, cur, fps, true);
+            if (best == null) best = pickMode(d, cur, fps, false);
+            if (best == null) {
+                java.util.TreeSet<String> rates = new java.util.TreeSet<>();
+                for (Display.Mode m : d.getSupportedModes()) rates.add(hz(m.getRefreshRate()));
+                modeNote = "TV tiada mod " + hz(fps * Math.max(1, Math.round(48f / fps))) + "Hz (ada: " + android.text.TextUtils.join(", ", rates) + "Hz)";
+                Hub.playLog("Padanan Hz: " + modeNote + " • mod semasa " + cur.getPhysicalWidth() + "x" + cur.getPhysicalHeight());
+                return;
+            }
             WindowManager.LayoutParams lp = getWindow().getAttributes();
             if (savedModeId < 0) savedModeId = lp.preferredDisplayModeId;
             lp.preferredDisplayModeId = best.getModeId();
             getWindow().setAttributes(lp);
+            modeNote = "minta " + best.getPhysicalWidth() + "x" + best.getPhysicalHeight() + " " + hz(best.getRefreshRate()) + "Hz…";
+            final float want = fps;
+            h.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (!started) return;
+                    float now = getWindowManager().getDefaultDisplay().getRefreshRate();
+                    if (isMultiple(now, want)) modeNote = "";
+                    else {
+                        modeNote = modeNote.replace("…", "") + " – TV tidak tukar";
+                        Hub.playLog("Padanan Hz: " + modeNote);
+                    }
+                }
+            }, 5000);
         } catch (RuntimeException ignored) {
         }
+    }
+
+    private String modeNote = "";
+
+    private static String hz(float r) {
+        return Math.abs(r - Math.round(r)) < 0.05f ? String.valueOf(Math.round(r)) : String.format(java.util.Locale.ROOT, "%.2f", r);
+    }
+
+    private static Display.Mode pickMode(Display d, Display.Mode cur, float fps, boolean sameSize) {
+        Display.Mode best = null;
+        float bestScore = Float.MAX_VALUE;
+        for (Display.Mode m : d.getSupportedModes()) {
+            boolean same = m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight();
+            if (sameSize != same) continue;
+            if (!sameSize && Math.min(m.getPhysicalWidth(), m.getPhysicalHeight()) < 1080) continue;
+            float r = m.getRefreshRate();
+            if (!isMultiple(r, fps)) continue;
+            float err = Math.abs(r - Math.round(r / fps) * fps);
+            // utamakan ≥48Hz, padanan paling tepat (24 utk 24fps), resolusi terbesar, kemudian Hz terendah (50 dari 100)
+            float score = (r < 47 ? 1000 : 0) + err * 100 - m.getPhysicalHeight() * 0.001f + r * 0.01f;
+            if (score < bestScore) {
+                bestScore = score;
+                best = m;
+            }
+        }
+        return best;
     }
 
     private static boolean isMultiple(float refresh, float fps) {
@@ -805,6 +932,10 @@ public class LiveTvActivity extends BaseActivity {
         streamFps = -1;
         cushionTarget = 0;
         swRetried = false;
+        recoveries = 0;
+        altFormat = false;
+        accountFull = false;
+        modeNote = "";
         resLabel.setVisibility(View.GONE);
         frameCount = 0;
         fpsDone = false;
@@ -833,6 +964,9 @@ public class LiveTvActivity extends BaseActivity {
         h.removeCallbacks(cushionTick);
         decoderName = "";
         droppedBase = 0;
+        reconnecting = false;
+        String alt = altFormat ? altUrl(c) : null;
+        if (alt != null) c = withUrl(c, alt);
         String low = c.url.toLowerCase(java.util.Locale.ROOT);
         progressive = forceMime == null && c.drmType == null && !low.contains("m3u8") && !low.contains(".mpd");
         try {
@@ -873,6 +1007,8 @@ public class LiveTvActivity extends BaseActivity {
             play(c, MimeTypes.APPLICATION_M3U8);
             return;
         }
+        // format HLS ditolak server (akaun tidak dibenarkan HLS): kembali ke format asal
+        if (altFormat && e.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS) altFormat = false;
         if (retries < MAX_RETRIES) {
             retries++;
             status.setText("Menyambung semula… (" + retries + ")");
@@ -993,6 +1129,7 @@ public class LiveTvActivity extends BaseActivity {
     protected void onStart() {
         super.onStart();
         started = true;
+        reconnecting = false;
         fpsDone = false; // kesan semula & minta mod paparan bila kembali
         frameCount = 0;
         sessionStart = SystemClock.elapsedRealtime();
